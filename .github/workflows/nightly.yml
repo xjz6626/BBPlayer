@@ -210,6 +210,8 @@ jobs:
             # 更新 release notes
             gh release edit ${{ env.NIGHTLY_TAG }} \
               --title "Nightly Build" \
+              --draft=false \
+              --prerelease \
               --notes "$RELEASE_NOTES"
           else
             echo "Creating new nightly release..."
