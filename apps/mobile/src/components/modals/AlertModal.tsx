@@ -1,0 +1,98 @@
+import React from 'react'
+import { Dialog, Text } from 'react-native-paper'
+
+import Button from '@/components/common/Button'
+import { useModalStore } from '@/hooks/stores/useModalStore'
+
+export interface AlertButton {
+	text: string
+	onPress?: () => void
+	/** 由回调原地替换当前弹窗时设为 false，避免 ModalHost 先退出再进入。 */
+	closeOnPress?: boolean
+}
+
+export interface AlertOptions {
+	cancelable?: boolean
+}
+
+export interface AlertModalProps {
+	title: string
+	message?: React.ReactNode
+	buttons: readonly [AlertButton, AlertButton?] // [negative, positive]
+	options?: AlertOptions
+}
+
+export default function AlertModal({
+	title,
+	message,
+	buttons,
+}: AlertModalProps) {
+	const close = useModalStore((state) => state.close)
+
+	const renderButton = (button: AlertButton | undefined, index: number) => {
+		if (!button) return null
+		switch (index) {
+			case 0: {
+				return (
+					<Button
+						key={index}
+						onPress={button.onPress ?? (() => close('Alert'))}
+						mode='text'
+					>
+						{button.text}
+					</Button>
+				)
+			}
+			case 1: {
+				const handlePress = () => {
+					if (button.closeOnPress === false) {
+						button.onPress?.()
+						return
+					}
+					close('Alert')
+					useModalStore.getState().doAfterModalHostClosed(() => {
+						button.onPress?.()
+					})
+				}
+				return (
+					<Button
+						key={index}
+						onPress={handlePress}
+						mode='text'
+					>
+						{button.text}
+					</Button>
+				)
+			}
+		}
+	}
+
+	return (
+		<>
+			<Dialog.Title>{title}</Dialog.Title>
+			<Dialog.Content>
+				{typeof message === 'string' || typeof message === 'number' ? (
+					<Text variant='bodyMedium'>{message}</Text>
+				) : (
+					message
+				)}
+			</Dialog.Content>
+			<Dialog.Actions>{buttons.map(renderButton)}</Dialog.Actions>
+		</>
+	)
+}
+
+export function alert(
+	title: string,
+	message: React.ReactNode,
+	buttons: readonly [AlertButton, AlertButton?],
+	options?: AlertOptions,
+) {
+	useModalStore
+		.getState()
+		.open(
+			'Alert',
+			{ title, message, buttons, options },
+			{ dismissible: !!options?.cancelable },
+		)
+}

@@ -1,0 +1,376 @@
+import { Orpheus } from '@bbplayer/orpheus'
+import {
+	fetch as fetchNetInfo,
+	addEventListener as addNetInfoEventListener,
+} from '@react-native-community/netinfo'
+import * as Sentry from '@sentry/react-native'
+import { focusManager, onlineManager } from '@tanstack/react-query'
+import * as Application from 'expo-application'
+import { ObserveRoot, useObserve } from 'expo-observe'
+import { Stack, router } from 'expo-router'
+import { useEffect, useState } from 'react'
+import type { AppStateStatus } from 'react-native'
+import { AppState, Platform, StyleSheet, View } from 'react-native'
+import { hide as hideBootSplash } from 'react-native-bootsplash'
+import { Text } from 'react-native-paper'
+import { Toaster } from 'sonner-native'
+
+import AnimatedBootSplash from '@/components/AnimatedBootSplash'
+import { alert } from '@/components/modals/AlertModal'
+import PlayerQueueModal from '@/components/modals/PlayerQueueModal'
+import AppProviders from '@/components/providers'
+import { useFeatureTracking } from '@/hooks/analytics/useFeatureTracking'
+import useCheckUpdate from '@/hooks/app/useCheckUpdate'
+import { useFastMigrations } from '@/hooks/app/useFastMigrations'
+import useAppStore, { serializeCookieObject } from '@/hooks/stores/useAppStore'
+import { initPlayerQueueStore } from '@/hooks/stores/usePlayerQueueStore'
+import { usePlayerStore } from '@/hooks/stores/usePlayerStore'
+import { initializeSentry } from '@/lib/config/sentry'
+import drizzleDb from '@/lib/db/db'
+import { analyticsService } from '@/lib/services/analyticsService'
+import lyricService from '@/lib/services/lyricService'
+import { playlistSyncWorker } from '@/lib/workers/PlaylistSyncWorker'
+import { ProjectScope } from '@/types/core/scope'
+import log, { cleanOldLogFiles, reportErrorToSentry } from '@/utils/log'
+import { storage } from '@/utils/mmkv'
+import { isActuallyOffline } from '@/utils/network'
+
+import migrations from '../../drizzle/migrations'
+
+const logger = log.extend('UI.RootLayout')
+
+// 初始化 Sentry
+initializeSentry()
+
+function onAppStateChange(status: AppStateStatus) {
+	if (Platform.OS !== 'web') {
+		focusManager.setFocused(status === 'active')
+	}
+	if (Platform.OS === 'android') {
+		Orpheus.setAppForeground(status === 'active')
+	}
+}
+
+function RootLayout() {
+	const [isReady, setIsReady] = useState(false)
+	const { markInteractive } = useObserve()
+	const { success: migrationsSuccess, error: migrationsError } =
+		useFastMigrations(drizzleDb, migrations)
+	useCheckUpdate()
+	useFeatureTracking()
+
+	onlineManager.setEventListener((setOnline) => {
+		void fetchNetInfo().then((state) => {
+			setOnline(!isActuallyOffline(state))
+		})
+
+		const unsubscribe = addNetInfoEventListener((state) => {
+			setOnline(!isActuallyOffline(state))
+		})
+		return unsubscribe
+	})
+
+	useEffect(() => {
+		const logAppInfo = async () => {
+			if (
+				Application.nativeApplicationVersion &&
+				Application.nativeBuildVersion
+			) {
+				await analyticsService.logAppInfo(
+					Application.nativeApplicationVersion,
+					Application.nativeBuildVersion,
+				)
+			}
+		}
+		void logAppInfo()
+
+		onAppStateChange(AppState.currentState)
+		const subscription = AppState.addEventListener('change', onAppStateChange)
+		return () => subscription.remove()
+	}, [])
+
+	useEffect(() => {
+		try {
+			useAppStore.getState()
+
+			// 清理旧日志
+			cleanOldLogFiles(7)
+				.andTee((deleted) => {
+					if (deleted > 0) {
+						logger.info(`已清理 ${deleted} 个旧日志文件`)
+					}
+				})
+				.orTee((e) => {
+					logger.warning('清理旧日志失败', { error: e.message })
+				})
+
+			// 迁移旧格式歌词
+			void lyricService.migrateFromOldFormat()
+
+			// 初始化播放器状态
+			usePlayerStore.getState().initialize()
+
+			// 初始化播放队列监听
+			initPlayerQueueStore()
+
+			// 桌面歌词权限启动检查
+			const checkOverlayPermissionOnStart = async () => {
+				if (Orpheus.isDesktopLyricsShown) {
+					const hasPermission = await Orpheus.checkOverlayPermission()
+					if (!hasPermission) {
+						// 延迟显示，确保 UI 已经加载
+						setTimeout(() => {
+							alert(
+								'桌面歌词',
+								'检测到桌面歌词已开启，但缺少悬浮窗权限，请授权以恢复显示。',
+								[
+									{ text: '取消' },
+									{
+										text: '去授权',
+										onPress: () => Orpheus.requestOverlayPermission(),
+									},
+								],
+							)
+						}, 1000)
+					}
+				}
+			}
+			void checkOverlayPermissionOnStart()
+
+			// 初始化播放器 Cookie
+			try {
+				const settings = useAppStore.getState().settings
+				void Orpheus.setDownloadMaxParallelTasks(
+					settings.downloadMaxParallelTasks,
+				)
+				void Orpheus.setAllowSimultaneousPlayback(
+					settings.allowSimultaneousPlayback,
+				)
+
+				const cookie = useAppStore.getState().bilibiliCookie
+				if (cookie) {
+					logger.debug('初始化 orpheus bilibili cookie')
+					Orpheus.setBilibiliCookie(serializeCookieObject(cookie))
+				} else {
+					logger.info('没有 bilibili cookie，跳过播放器初始化')
+				}
+			} catch (error) {
+				logger.error('播放器初始化失败: ', error)
+				reportErrorToSentry(error, '播放器初始化失败', ProjectScope.Player)
+			}
+		} catch (error) {
+			logger.error('初始化失败:', error)
+			reportErrorToSentry(error, '初始化失败', ProjectScope.UI)
+		} finally {
+			// oxlint-disable-next-line react-you-might-not-need-an-effect/no-initialize-state
+			setIsReady(true)
+		}
+	}, [])
+
+	useEffect(() => {
+		if (isReady && migrationsSuccess) {
+			markInteractive()
+
+			// 恢复上次被中断的同步任务（syncing → pending），并触发同步
+			playlistSyncWorker.recoverStuckRows().catch((error) => {
+				logger.error('恢复同步任务失败:', error)
+			})
+
+			const firstOpen = storage.getBoolean('first_open') ?? true
+			if (firstOpen) {
+				router.push('/onboarding')
+			}
+		}
+	}, [isReady, migrationsSuccess, markInteractive])
+
+	useEffect(() => {
+		if (migrationsError) {
+			void hideBootSplash({ fade: true })
+			logger.error('数据库迁移失败：', migrationsError)
+		}
+	}, [migrationsError])
+
+	if (migrationsError) {
+		return (
+			<View style={styles.errorContainer}>
+				<Text>数据库迁移失败: {migrationsError?.message}</Text>
+				<Text>建议截图报错信息，发到项目 issues 反馈</Text>
+			</View>
+		)
+	}
+
+	return (
+		<View style={styles.appContainer}>
+			<AppProviders>
+				{migrationsSuccess && isReady ? (
+					<Stack screenOptions={{ headerShown: false }}>
+						<Stack.Screen
+							name='(tabs)'
+							options={{ headerShown: false }}
+						/>
+
+						<Stack.Screen
+							name='player'
+							options={{
+								animation: 'slide_from_bottom',
+								headerShown: false,
+							}}
+						/>
+
+						<Stack.Screen
+							name='test'
+							options={{ headerShown: false }}
+						/>
+
+						<Stack.Screen
+							name='onboarding'
+							options={{ headerShown: false }}
+						/>
+
+						<Stack.Screen
+							name='playlist/remote/search-result/global/[query]'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='playlist/remote/collection/[id]'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='playlist/remote/favorite/[id]'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='playlist/remote/multipage/[bvid]'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='playlist/remote/uploader/[mid]'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='playlist/remote/search-result/fav/[query]'
+							options={{ headerShown: false }}
+						/>
+
+						<Stack.Screen
+							name='playlist/local/[id]'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='share/playlist'
+							options={{ headerShown: false }}
+						/>
+
+						<Stack.Screen
+							name='history/overall'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='history/[date]'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='download'
+							options={{ headerShown: false }}
+						/>
+
+						<Stack.Screen
+							name='+not-found'
+							options={{ headerShown: false }}
+						/>
+
+						<Stack.Screen
+							name='modal'
+							options={{
+								presentation: 'transparentModal',
+								gestureEnabled: false,
+								animation: 'fade',
+								headerShown: false,
+							}}
+						/>
+						<Stack.Screen
+							name='playlist/remote/toview'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='recommendations'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='weekly-rank'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='comments/[bvid]'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='comments/reply'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='playlist/external-sync'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='playlist/text-import'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='settings/appearance'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='settings/theme'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='settings/theme/search'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='settings/playback'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='settings/lyrics'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='settings/download'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='settings/general'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='settings/account'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='settings/donate'
+							options={{ headerShown: false }}
+						/>
+					</Stack>
+				) : null}
+				<Toaster />
+				<PlayerQueueModal />
+			</AppProviders>
+			<AnimatedBootSplash ready={isReady && migrationsSuccess} />
+		</View>
+	)
+}
+
+export default Sentry.wrap(ObserveRoot.wrap(RootLayout))
+
+const styles = StyleSheet.create({
+	appContainer: {
+		flex: 1,
+	},
+	errorContainer: {
+		flex: 1,
+		justifyContent: 'center',
+		alignItems: 'center',
+	},
+})

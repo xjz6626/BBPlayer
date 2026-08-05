@@ -1,0 +1,327 @@
+import type { LegendListRef } from '@legendapp/list/react-native'
+import { useImage } from 'expo-image'
+import { useLocalSearchParams, useRouter } from 'expo-router'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { StyleSheet, View } from 'react-native'
+import { Appbar, useTheme } from 'react-native-paper'
+
+import NowPlayingBar from '@/components/NowPlayingBar'
+import ThemedRefreshControl, {
+	ThemedRefreshListHeader,
+} from '@/components/theme/ThemedRefreshControl'
+import { FlashingTrackListItem } from '@/features/playlist/remote/components/FlashingTrackListItem'
+import { PlaylistError } from '@/features/playlist/remote/components/PlaylistError'
+import { PlaylistHeader } from '@/features/playlist/remote/components/PlaylistHeader'
+import type { ExtraData } from '@/features/playlist/remote/components/RemoteTrackList'
+import { TrackList } from '@/features/playlist/remote/components/RemoteTrackList'
+import useCheckLinkedToPlaylist from '@/features/playlist/remote/hooks/useCheckLinkedToLocalPlaylist'
+import { usePlaylistMenu } from '@/features/playlist/remote/hooks/usePlaylistMenu'
+import { useRemotePlaylist } from '@/features/playlist/remote/hooks/useRemotePlaylist'
+import { useTrackSelection } from '@/features/playlist/remote/hooks/useTrackSelection'
+import { PlaylistPageSkeleton } from '@/features/playlist/skeletons/PlaylistSkeleton'
+import { usePlaylistSync } from '@/hooks/mutations/db/playlist'
+import {
+	useGetMultiPageList,
+	useGetVideoDetails,
+} from '@/hooks/queries/bilibili/video'
+import { useModalStore } from '@/hooks/stores/useModalStore'
+import { useDoubleTapScrollToTop } from '@/hooks/ui/useDoubleTapScrollToTop'
+import { usePlaylistBackgroundColor } from '@/hooks/ui/usePlaylistBackgroundColor'
+import { bv2av } from '@/lib/api/bilibili/utils'
+import type { BilibiliTrack, Track } from '@/types/core/media'
+import type { ListRenderItemInfoWithExtraData } from '@/types/legendlist'
+import { mapBilibiliVideoPageToTrack } from '@/utils/bilibili-track'
+import * as Haptics from '@/utils/haptics'
+import { resolveBilibiliImageUrl } from '@/utils/imageUrl'
+import toast from '@/utils/toast'
+
+export default function MultipagePage() {
+	const router = useRouter()
+	const { bvid, cid } = useLocalSearchParams<{ bvid: string; cid?: string }>()
+	const [refreshing, setRefreshing] = useState(false)
+	const theme = useTheme()
+	const { colors } = theme
+	const linkedPlaylistId = useCheckLinkedToPlaylist(bv2av(bvid), 'multi_page')
+
+	const { selected, selectMode, toggle, enterSelectMode, setSelected } =
+		useTrackSelection()
+	const selection = useMemo(
+		() => ({
+			active: selectMode,
+			selected,
+			toggle,
+			enter: enterSelectMode,
+		}),
+		[selectMode, selected, toggle, enterSelectMode],
+	)
+	const openModal = useModalStore((state) => state.open)
+
+	const {
+		data: rawMultipageData,
+		isPending: isMultipageDataPending,
+		isError: isMultipageDataError,
+		refetch,
+	} = useGetMultiPageList(bvid)
+
+	const {
+		data: videoData,
+		isError: isVideoDataError,
+		isPending: isVideoDataPending,
+	} = useGetVideoDetails(bvid)
+
+	const tracksData = useMemo(() => {
+		if (!rawMultipageData || !videoData) {
+			return []
+		}
+		return rawMultipageData.map((item) =>
+			mapBilibiliVideoPageToTrack(item, videoData),
+		)
+	}, [rawMultipageData, videoData])
+
+	const coverRef = useImage(resolveBilibiliImageUrl(videoData?.pic) ?? '', {
+		onError: () => void 0,
+	})
+	const {
+		backgroundColor,
+		nowPlayingBarColor,
+		primaryButtonColor,
+		primaryButtonTextColor,
+		secondaryButtonContainerColor,
+		secondaryButtonIconColor,
+	} = usePlaylistBackgroundColor(coverRef, theme.dark, colors.background)
+
+	const { mutate: syncMultipage } = usePlaylistSync()
+
+	const { playTrack } = useRemotePlaylist()
+	const listRef = useRef<LegendListRef>(null)
+	const { handleDoubleTap } = useDoubleTapScrollToTop(listRef)
+
+	const trackMenuItems = usePlaylistMenu(playTrack)
+
+	const handleSync = useCallback(() => {
+		const toastId = 'sync-playlist'
+		toast.show('同步中...', { id: toastId, duration: Infinity })
+		setRefreshing(true)
+		syncMultipage(
+			{
+				remoteSyncId: bv2av(bvid),
+				type: 'multi_page',
+				toastId,
+			},
+			{
+				onSuccess: (id) => {
+					if (!id) return
+					router.replace({
+						pathname: '/playlist/local/[id]',
+						params: { id: String(id) },
+					})
+				},
+			},
+		)
+		setRefreshing(false)
+	}, [bvid, router, syncMultipage])
+
+	useEffect(() => {
+		if (tracksData.length > 0 && cid) {
+			const index = tracksData.findIndex((track) => String(track.id) === cid)
+			if (index !== -1) {
+				// 给一点延时给列表渲染
+				const timer = setTimeout(() => {
+					void listRef.current?.scrollToIndex({
+						index,
+						animated: true,
+						viewPosition: 0.5,
+					})
+				}, 500)
+				return () => {
+					clearTimeout(timer)
+				}
+			}
+		}
+	}, [cid, tracksData])
+
+	const renderCustomItem = useCallback(
+		({
+			item,
+			index,
+			extraData,
+		}: ListRenderItemInfoWithExtraData<BilibiliTrack, ExtraData>) => {
+			if (!extraData) throw new Error('Extradata 不存在')
+			const {
+				playTrack: play,
+				trackMenuItems,
+				selection,
+				showItemCover,
+			} = extraData
+
+			const shouldFlash = String(item.id) === cid
+
+			return (
+				<FlashingTrackListItem
+					shouldFlash={shouldFlash}
+					index={index}
+					onTrackPress={() => play(item)}
+					menuItems={trackMenuItems(item)}
+					showCoverImage={showItemCover ?? true}
+					data={{
+						cover: item.coverUrl ?? undefined,
+						title: item.title,
+						duration: item.duration,
+						id: item.id,
+						artistName: item.artist?.name,
+						uniqueKey: item.uniqueKey,
+						titleHtml: item.titleHtml,
+					}}
+					toggleSelected={() => {
+						void Haptics.performHaptics(Haptics.AndroidHaptics.Clock_Tick)
+						selection.toggle(item.id)
+					}}
+					isSelected={selection.selected.has(item.id)}
+					selectMode={selection.active}
+					enterSelectMode={() => {
+						void Haptics.performHaptics(Haptics.AndroidHaptics.Long_Press)
+						selection.enter(item.id)
+					}}
+				/>
+			)
+		},
+		[cid],
+	)
+
+	useEffect(() => {
+		if (typeof bvid !== 'string') {
+			router.replace('/+not-found')
+		}
+	}, [bvid, router])
+
+	if (typeof bvid !== 'string') {
+		return null
+	}
+
+	if (isMultipageDataPending || isVideoDataPending) {
+		return <PlaylistPageSkeleton />
+	}
+
+	if (isMultipageDataError || isVideoDataError) {
+		return <PlaylistError text='加载失败' />
+	}
+
+	return (
+		<View style={[styles.container, { backgroundColor }]}>
+			<Appbar.Header
+				elevated
+				style={{ backgroundColor: 'transparent' }}
+			>
+				<Appbar.Content
+					title={
+						selectMode
+							? `已选择\u2009${selected.size}\u2009首`
+							: videoData.title
+					}
+					onPress={handleDoubleTap}
+				/>
+				{selectMode ? (
+					<>
+						<Appbar.Action
+							icon='select-all'
+							onPress={() => setSelected(new Set(tracksData.map((t) => t.id)))}
+						/>
+						<Appbar.Action
+							icon='select-compare'
+							onPress={() =>
+								setSelected(
+									new Set(
+										tracksData
+											.filter((t) => !selected.has(t.id))
+											.map((t) => t.id),
+									),
+								)
+							}
+						/>
+						<Appbar.Action
+							icon='playlist-plus'
+							onPress={() => {
+								const trackMap = new Map(tracksData.map((t) => [t.id, t]))
+								const payloads = []
+								for (const id of selected) {
+									const track = trackMap.get(id)
+									if (track) {
+										payloads.push({
+											track: track as Track,
+											artist: track.artist!,
+										})
+									}
+								}
+								openModal('BatchAddTracksToLocalPlaylist', {
+									payloads,
+								})
+							}}
+						/>
+					</>
+				) : (
+					<Appbar.BackAction onPress={() => router.back()} />
+				)}
+			</Appbar.Header>
+
+			<View style={styles.listContainer}>
+				<TrackList
+					listRef={listRef}
+					renderCustomItem={renderCustomItem}
+					tracks={tracksData}
+					playTrack={playTrack}
+					trackMenuItems={trackMenuItems}
+					selection={selection}
+					showItemCover={false}
+					ListHeaderComponent={
+						<ThemedRefreshListHeader refreshing={refreshing}>
+							<PlaylistHeader
+								cover={coverRef ?? undefined}
+								title={videoData.title}
+								subtitles={`${videoData.owner.name}\u2009•\u2009${tracksData.length}\u2009首歌曲`}
+								description={videoData.desc}
+								onClickMainButton={handleSync}
+								mainButtonIcon={'sync'}
+								linkedPlaylistId={linkedPlaylistId}
+								id={bv2av(bvid)}
+								primaryButtonColor={primaryButtonColor}
+								primaryButtonTextColor={primaryButtonTextColor}
+								secondaryButtonContainerColor={secondaryButtonContainerColor}
+								secondaryButtonIconColor={secondaryButtonIconColor}
+							/>
+						</ThemedRefreshListHeader>
+					}
+					refreshControl={
+						<ThemedRefreshControl
+							refreshing={refreshing}
+							onRefresh={async () => {
+								setRefreshing(true)
+								await refetch()
+								setRefreshing(false)
+							}}
+							colors={[colors.primary]}
+							progressViewOffset={50}
+						/>
+					}
+				/>
+			</View>
+			<View style={styles.nowPlayingBarContainer}>
+				<NowPlayingBar backgroundColor={nowPlayingBarColor} />
+			</View>
+		</View>
+	)
+}
+
+const styles = StyleSheet.create({
+	container: {
+		flex: 1,
+	},
+	listContainer: {
+		flex: 1,
+	},
+	nowPlayingBarContainer: {
+		position: 'absolute',
+		bottom: 0,
+		left: 0,
+		right: 0,
+	},
+})

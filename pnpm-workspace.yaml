@@ -1,0 +1,21 @@
+packages:
+  - apps/*
+  - packages/*
+  - packages/*/example
+
+onlyBuiltDependencies:
+  - '@evilmartians/lefthook'
+  - '@firebase/util'
+  - '@sentry/cli'
+  - '@shopify/react-native-skia'
+  - esbuild
+  - lefthook
+  - protobufjs
+  - react-native-logs
+  - sharp
+  - unrs-resolver
+  - workerd
+patchedDependencies:
+  metro-runtime@0.84.4: patches/metro-runtime@0.84.4.patch
+  metro@0.84.4: patches/metro@0.84.4.patch
+  rn-newarch-svga-player@1.1.16: patches/rn-newarch-svga-player@1.1.16.patch
