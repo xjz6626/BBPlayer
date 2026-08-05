@@ -23,11 +23,6 @@ interface UpdateSourceConfig {
 	updateRepository?: string
 }
 
-interface GitHubReleaseAsset {
-	browser_download_url: string
-	name: string
-}
-
 const getUpdateSourceConfig = (): UpdateSourceConfig => {
 	const extra = Constants?.expoConfig?.extra as UpdateSourceConfig | undefined
 	return extra ?? {}
@@ -66,84 +61,27 @@ export async function fetchLatestRelease(): Promise<
 			return err(new Error('未在 app.config 中配置 GitHub 更新渠道'))
 		}
 
-		const apiBase = `https://api.github.com/repos/${updateRepository}`
+		const manifestUrl = `https://github.com/${updateRepository}/releases/download/${encodeURIComponent(updateReleaseTag)}/nightly-update.json`
 		const requestOptions: RequestInit = {
 			cache: 'no-store',
 			headers: {
-				Accept: 'application/vnd.github+json',
-				'X-GitHub-Api-Version': '2022-11-28',
+				Accept: 'application/json',
 			},
 		}
-		const [releaseResponse, tagResponse] = await Sentry.startSpan(
-			{ name: 'http:fetch:github-nightly-release', op: 'http' },
-			() =>
-				Promise.all([
-					fetch(
-						`${apiBase}/releases/tags/${encodeURIComponent(updateReleaseTag)}`,
-						requestOptions,
-					),
-					fetch(
-						`${apiBase}/git/ref/tags/${encodeURIComponent(updateReleaseTag)}`,
-						requestOptions,
-					),
-				]),
+		const response = await Sentry.startSpan(
+			{ name: 'http:fetch:github-nightly-manifest', op: 'http' },
+			() => fetch(manifestUrl, requestOptions),
 		)
-		if (!releaseResponse.ok) {
+		if (!response.ok) {
 			return err(
 				new Error(
-					`GitHub Release 请求失败: ${releaseResponse.status} ${releaseResponse.statusText}`,
-				),
-			)
-		}
-		if (!tagResponse.ok) {
-			return err(
-				new Error(
-					`GitHub Nightly 标签请求失败: ${tagResponse.status} ${tagResponse.statusText}`,
+					`Nightly 更新清单请求失败: ${response.status} ${response.statusText}`,
 				),
 			)
 		}
 
-		const releaseJson: unknown = await releaseResponse.json()
-		const tagJson: unknown = await tagResponse.json()
-		if (
-			typeof releaseJson !== 'object' ||
-			releaseJson === null ||
-			typeof tagJson !== 'object' ||
-			tagJson === null
-		) {
-			return err(new Error('GitHub 更新信息格式错误'))
-		}
-
-		const release = releaseJson as Record<string, unknown>
-		const tag = tagJson as Record<string, unknown>
-		const tagObject = tag.object
-		const buildCommit =
-			typeof tagObject === 'object' &&
-			tagObject !== null &&
-			typeof (tagObject as Record<string, unknown>).sha === 'string'
-				? ((tagObject as Record<string, unknown>).sha as string)
-				: undefined
-		const url = release.html_url
-		if (!buildCommit || typeof url !== 'string') {
-			return err(new Error('GitHub 更新信息缺少提交或 Release 地址'))
-		}
-
-		const assets = parseGitHubReleaseAssets(release.assets)
-		const apk = assets.find((asset) =>
-			asset.name.toLowerCase().endsWith('.apk'),
-		)
-		const downloads = apk
-			? { android: { 'arm64-v8a': apk.browser_download_url } }
-			: undefined
-		const shortCommit = buildCommit.slice(0, 7)
-		const releaseInfo = {
-			buildCommit,
-			version: `nightly-${shortCommit}`,
-			url,
-			notes: typeof release.body === 'string' ? release.body : '',
-			downloads,
-			forced: false,
-		}
+		const releaseInfo = parseReleaseInfo(await response.json())
+		if (!releaseInfo) return err(new Error('Nightly 更新清单格式错误'))
 		return ok(releaseInfo)
 	} catch (e) {
 		return err(toError(e))
@@ -176,19 +114,48 @@ export async function checkForAppUpdate(): Promise<
 	return ok({ update: info, currentVersion })
 }
 
-const parseGitHubReleaseAssets = (value: unknown): GitHubReleaseAsset[] =>
-	Array.isArray(value)
-		? value.flatMap((item) => {
-				if (typeof item !== 'object' || item === null) return []
-				const asset = item as Record<string, unknown>
-				return typeof asset.name === 'string' &&
-					typeof asset.browser_download_url === 'string'
-					? [
-							{
-								name: asset.name,
-								browser_download_url: asset.browser_download_url,
-							},
-						]
-					: []
-			})
-		: []
+const parseReleaseInfo = (value: unknown): ReleaseInfo | undefined => {
+	if (typeof value !== 'object' || value === null) return undefined
+	const manifest = value as Record<string, unknown>
+	const buildCommit = manifest.buildCommit
+	const version = manifest.version
+	const notes = manifest.notes
+	const url = manifest.url
+	const forced = manifest.forced
+	const downloads = parseUpdateDownloads(manifest.downloads)
+	if (
+		typeof buildCommit !== 'string' ||
+		typeof version !== 'string' ||
+		typeof notes !== 'string' ||
+		typeof url !== 'string' ||
+		typeof forced !== 'boolean' ||
+		!downloads
+	) {
+		return undefined
+	}
+	const listedNotes = manifest.listed_notes
+	return {
+		buildCommit,
+		version,
+		notes,
+		url,
+		downloads,
+		forced,
+		...(Array.isArray(listedNotes) &&
+		listedNotes.every((item) => typeof item === 'string')
+			? { listed_notes: listedNotes }
+			: {}),
+	}
+}
+
+const parseUpdateDownloads = (value: unknown): UpdateDownloads | undefined => {
+	if (typeof value !== 'object' || value === null) return undefined
+	const android = (value as Record<string, unknown>).android
+	if (typeof android !== 'object' || android === null) return undefined
+	const entries = Object.entries(android).filter(
+		(entry): entry is [string, string] => typeof entry[1] === 'string',
+	)
+	return entries.length > 0
+		? { android: Object.fromEntries(entries) }
+		: undefined
+}

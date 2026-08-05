@@ -140,11 +140,13 @@ jobs:
           TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")
           VERSION_CODE=$(node scripts/version-code.mjs)
 
-          APK_NAME="bbplayer-nightly-${SHORT_SHA}"
+          APK_NAME="bbplayer-nightly-arm64-v8a"
+          UPDATE_MANIFEST_NAME="nightly-update.json"
 
           echo "APP_VERSION=${APP_VERSION}" >> $GITHUB_ENV
           echo "APK_NAME=${APK_NAME}" >> $GITHUB_ENV
           echo "APK_PATH=${{ runner.temp }}/${APK_NAME}.apk" >> $GITHUB_ENV
+          echo "UPDATE_MANIFEST_PATH=${{ runner.temp }}/${UPDATE_MANIFEST_NAME}" >> $GITHUB_ENV
           echo "COMMIT_SHA=${COMMIT_SHA}" >> $GITHUB_ENV
           echo "SHORT_SHA=${SHORT_SHA}" >> $GITHUB_ENV
           echo "TIMESTAMP=${TIMESTAMP}" >> $GITHUB_ENV
@@ -192,6 +194,9 @@ jobs:
           | 🕐 构建时间 | ${{ env.TIMESTAMP }} UTC |
           | 📦 架构 | arm64-v8a |"
 
+          export RELEASE_NOTES
+          node scripts/write-nightly-manifest.mjs
+
           # 检查 nightly release 是否存在
           if gh release view ${{ env.NIGHTLY_TAG }} > /dev/null 2>&1; then
             echo "Nightly release exists, updating..."
@@ -205,7 +210,10 @@ jobs:
             done
             
             # 上传新的 APK
-            gh release upload ${{ env.NIGHTLY_TAG }} "${{ env.APK_PATH }}" --clobber
+            gh release upload ${{ env.NIGHTLY_TAG }} \
+              "${{ env.APK_PATH }}" \
+              "${{ env.UPDATE_MANIFEST_PATH }}" \
+              --clobber
             
             # 更新 release notes
             gh release edit ${{ env.NIGHTLY_TAG }} \
@@ -217,6 +225,7 @@ jobs:
             echo "Creating new nightly release..."
             gh release create ${{ env.NIGHTLY_TAG }} \
               "${{ env.APK_PATH }}" \
+              "${{ env.UPDATE_MANIFEST_PATH }}" \
               --title "Nightly Build" \
               --prerelease \
               --notes "$RELEASE_NOTES"
