@@ -138,7 +138,7 @@ jobs:
           COMMIT_SHA="${{ needs.check-trigger.outputs.head_sha }}"
           SHORT_SHA="${COMMIT_SHA:0:7}"
           TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")
-          VERSION_CODE=$(git rev-list --count HEAD)
+          VERSION_CODE=$(node scripts/version-code.mjs)
 
           APK_NAME="bbplayer-nightly-${SHORT_SHA}"
 
