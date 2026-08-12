@@ -88,6 +88,8 @@ interface BilibiliHistoryVideo {
 interface BilibiliVideoDetails {
 	aid: number
 	bvid: string
+	tid?: number
+	tname?: string
 	title: string
 	pic: string
 	pubdate: number
@@ -100,6 +102,9 @@ interface BilibiliVideoDetails {
 	}
 	cid: number
 	pages: BilibiliVideoDetailsPage[]
+	stat?: {
+		view: number
+	}
 }
 
 /**
@@ -119,6 +124,35 @@ interface BilibiliPlaylist {
 	title: string
 	media_count: number
 	fav_state: number // 目标 id 是否存在于收藏夹中：0：不存在；1：存在（当未提供 rid 时始终为 0）
+	attr?: number // bit 1 为 0 时是默认收藏夹
+}
+
+/**
+ * 个性化推荐流中的视频项目
+ */
+interface BilibiliRecommendationItem {
+	goto: string
+	bvid?: string
+	title: string
+	pic: string
+	tid?: number
+	tname?: string
+	is_followed?: number
+	owner?: {
+		mid: number
+		name: string
+		face: string
+	}
+	duration?: number
+}
+
+interface BilibiliRecommendationFeed {
+	item: BilibiliRecommendationItem[]
+	mid?: number
+}
+
+interface BilibiliUserRelation {
+	attribute: number
 }
 
 /**
@@ -432,6 +466,39 @@ interface BilibiliWebPlayerInfo {
 		music_title: string
 		jump_url: string
 	}
+	subtitle?: {
+		allow_submit: boolean
+		lan: string
+		lan_doc: string
+		subtitles: BilibiliSubtitleItem[]
+	}
+}
+
+interface BilibiliSubtitleItem {
+	id: number
+	id_str: string
+	lan: string
+	lan_doc: string
+	subtitle_url: string
+	/** 0 = uploader/CC subtitle, 1 = AI-generated subtitle. */
+	type: 0 | 1
+	/** 0 = original transcription, 1 = AI translation. */
+	ai_type: 0 | 1
+	ai_status: 0 | 1 | 2
+}
+
+interface BilibiliSubtitleData {
+	font_size?: number
+	font_color?: string
+	background_alpha?: number
+	background_color?: string
+	Stroke?: string
+	body: {
+		from: number
+		to: number
+		location?: number
+		content: string
+	}[]
 }
 
 interface BilibiliToViewVideoList {
@@ -493,7 +560,13 @@ interface BilibiliCommentContent {
 	device: string
 	members: unknown[]
 	emote?: Record<string, BilibiliCommentEmote>
-	jump_url: Record<string, unknown>
+	jump_url: Record<
+		string,
+		{
+			title?: string
+			click_report?: string
+		} | null
+	>
 	max_line: number
 	pictures?: {
 		img_src: string
@@ -681,14 +754,19 @@ export type {
 	BilibiliMediaItemInCollection,
 	BilibiliMultipageVideo,
 	BilibiliPlaylist,
+	BilibiliRecommendationFeed,
+	BilibiliRecommendationItem,
 	BilibiliReplyCommentsResponse,
 	BilibiliSearchSuggestionItem,
 	BilibiliSearchVideo,
 	BilibiliSearchUser,
 	BilibiliSmsLoginData,
 	BilibiliSmsSendData,
+	BilibiliSubtitleData,
+	BilibiliSubtitleItem,
 	BilibiliToViewVideoList,
 	BilibiliUserInfo,
+	BilibiliUserRelation,
 	BilibiliUserUploadedVideosResponse,
 	BilibiliVideoDetails,
 	BilibiliWebPlayerInfo,
@@ -697,3 +775,4 @@ export type {
 export { BilibiliQrCodeLoginStatus }
 
 export type * from './garb'
+export type * from './bilibili-dynamic'

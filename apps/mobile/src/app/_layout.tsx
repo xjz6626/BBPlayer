@@ -8,7 +8,6 @@ import { focusManager, onlineManager } from '@tanstack/react-query'
 import * as Application from 'expo-application'
 import { Observe, ObserveRoot, useObserve } from 'expo-observe'
 import { router, Stack } from 'expo-router'
-import * as Updates from 'expo-updates'
 import { useEffect, useState } from 'react'
 import type { AppStateStatus } from 'react-native'
 import { AppState, Platform, StyleSheet, View } from 'react-native'
@@ -32,11 +31,9 @@ import { analyticsService } from '@/lib/services/analyticsService'
 import lyricService from '@/lib/services/lyricService'
 import { playlistSyncWorker } from '@/lib/workers/PlaylistSyncWorker'
 import { ProjectScope } from '@/types/core/scope'
-import { toastAndLogError } from '@/utils/error-handling'
 import log, { cleanOldLogFiles, reportErrorToSentry } from '@/utils/log'
 import { storage } from '@/utils/mmkv'
 import { isActuallyOffline } from '@/utils/network'
-import toast from '@/utils/toast'
 
 import migrations from '../../drizzle/migrations'
 
@@ -49,11 +46,12 @@ Observe.configure({
 // 初始化 Sentry
 initializeSentry()
 
-const developement = process.env.NODE_ENV === 'development'
-
 function onAppStateChange(status: AppStateStatus) {
 	if (Platform.OS !== 'web') {
 		focusManager.setFocused(status === 'active')
+	}
+	if (Platform.OS === 'android') {
+		Orpheus.setAppForeground(status === 'active')
 	}
 }
 
@@ -111,6 +109,7 @@ function RootLayout() {
 		}
 		void logAppInfo()
 
+		onAppStateChange(AppState.currentState)
 		const subscription = AppState.addEventListener('change', onAppStateChange)
 		return () => subscription.remove()
 	}, [])
@@ -194,23 +193,6 @@ function RootLayout() {
 			logger.error('数据库迁移失败：', migrationsError)
 		}
 	}, [migrationsError])
-
-	useEffect(() => {
-		if (developement) {
-			return
-		}
-		Updates.checkForUpdateAsync()
-			.then((result) => {
-				if (result.isAvailable) {
-					toast.show('有新的热更新，将在下次启动时应用', {
-						id: 'update',
-					})
-				}
-			})
-			.catch((error: Error) => {
-				toastAndLogError('检测更新失败', error, 'UI.RootLayout')
-			})
-	}, [])
 
 	if (migrationsError) {
 		return (
@@ -315,6 +297,14 @@ function RootLayout() {
 							options={{ headerShown: false }}
 						/>
 						<Stack.Screen
+							name='recommendations'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='weekly-rank'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
 							name='comments/[bvid]'
 							options={{ headerShown: false }}
 						/>
@@ -324,6 +314,10 @@ function RootLayout() {
 						/>
 						<Stack.Screen
 							name='playlist/external-sync'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='playlist/text-import'
 							options={{ headerShown: false }}
 						/>
 						<Stack.Screen

@@ -3,11 +3,14 @@ import { useRouter } from 'expo-router'
 import { useCallback } from 'react'
 
 import { MULTIPAGE_VIDEO_KEYWORDS } from '@/features/playlist/remote/search-result/constants'
+import { useAddToDefaultFavorite } from '@/hooks/mutations/bilibili/favorite'
+import { usePersonalInformation } from '@/hooks/queries/bilibili/user'
 import { useModalStore } from '@/hooks/stores/useModalStore'
 import { syncFacade } from '@/lib/facades/syncBilibiliPlaylist'
 import type { BilibiliTrack } from '@/types/core/media'
 import { toastAndLogError } from '@/utils/error-handling'
 import { reportErrorToSentry } from '@/utils/log'
+import { cleanString } from '@/utils/matching'
 import { addToQueue } from '@/utils/player'
 import toast from '@/utils/toast'
 
@@ -31,15 +34,23 @@ const ARTIST_ICON = Icon.select({
 	android: import('@expo/material-symbols/person.xml'),
 })
 
+const FAVORITE_ICON = Icon.select({
+	ios: 'star',
+	android: import('@expo/material-symbols/bookmark_star.xml'),
+})
+
 export function useSearchInteractions() {
 	const router = useRouter()
 	const openModal = useModalStore((state) => state.open)
+	const { data: personalInformation } = usePersonalInformation()
+	const { mutate: addToDefaultFavorite } = useAddToDefaultFavorite()
 
 	const playTrack = useCallback(
 		async (track: BilibiliTrack, playNext = false) => {
+			const normalizedTitle = cleanString(track.title ?? '')
 			if (
 				MULTIPAGE_VIDEO_KEYWORDS.some((keyword) =>
-					track.title?.includes(keyword),
+					normalizedTitle.includes(cleanString(keyword)),
 				)
 			) {
 				router.push({
@@ -63,11 +74,11 @@ export function useSearchInteractions() {
 				return
 			}
 			await addToQueue({
-				tracks: [track],
+				tracks: [createIt.value],
 				playNow: !playNext,
 				clearQueue: false,
 				playNext: playNext,
-				startFromKey: track.uniqueKey,
+				startFromKey: createIt.value.uniqueKey,
 			})
 			if (playNext) {
 				toast.success('添加到下一首播放成功')
@@ -94,6 +105,20 @@ export function useSearchInteractions() {
 				},
 			},
 			{
+				title: '收藏到默认收藏夹',
+				leadingIcon: FAVORITE_ICON,
+				onPress: () => {
+					if (!personalInformation?.mid) {
+						toast.info('请先登录 B 站账号')
+						return
+					}
+					addToDefaultFavorite({
+						bvid: item.bilibiliMetadata.bvid,
+						userMid: personalInformation.mid,
+					})
+				},
+			},
+			{
 				title: '添加到本地歌单',
 				leadingIcon: ADD_TO_PLAYLIST_ICON,
 				onPress: () => {
@@ -114,7 +139,13 @@ export function useSearchInteractions() {
 				},
 			},
 		],
-		[router, openModal, playTrack],
+		[
+			router,
+			openModal,
+			playTrack,
+			personalInformation?.mid,
+			addToDefaultFavorite,
+		],
 	)
 
 	return {

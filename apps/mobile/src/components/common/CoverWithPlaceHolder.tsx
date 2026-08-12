@@ -2,11 +2,12 @@ import type { ImageRef } from 'expo-image'
 import { Image } from 'expo-image'
 import { LinearGradient } from 'expo-linear-gradient'
 import { memo, useMemo } from 'react'
-import type { ColorSchemeName, StyleProp, ViewStyle } from 'react-native'
-import { StyleSheet, Text, useColorScheme } from 'react-native'
+import type { StyleProp, ViewStyle } from 'react-native'
+import { StyleSheet, Text } from 'react-native'
 import SquircleView from 'react-native-fast-squircle'
 import { runes } from 'runes2'
 
+import useResolvedColorScheme from '@/hooks/theme/useResolvedColorScheme'
 import { getGradientColors } from '@/utils/color'
 import { resolveBilibiliImageUrl } from '@/utils/imageUrl'
 
@@ -58,7 +59,7 @@ const CoverWithPlaceHolder = memo(function CoverWithPlaceHolder({
 	cachePolicy = 'disk',
 	style,
 }: CoverWithPlaceHolderProps) {
-	const colorScheme: ColorSchemeName = useColorScheme()
+	const colorScheme = useResolvedColorScheme()
 	const isDark: boolean = colorScheme === 'dark'
 
 	const computedBorderRadius = borderRadius ?? size * 0.22

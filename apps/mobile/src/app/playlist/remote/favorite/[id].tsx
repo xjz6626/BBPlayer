@@ -1,10 +1,13 @@
 import { useImage } from 'expo-image'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { RefreshControl, StyleSheet, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
 import { Appbar, useTheme } from 'react-native-paper'
 
 import NowPlayingBar from '@/components/NowPlayingBar'
+import ThemedRefreshControl, {
+	ThemedRefreshListHeader,
+} from '@/components/theme/ThemedRefreshControl'
 import { PlaylistError } from '@/features/playlist/remote/components/PlaylistError'
 import { PlaylistHeader } from '@/features/playlist/remote/components/PlaylistHeader'
 import { TrackList } from '@/features/playlist/remote/components/RemoteTrackList'
@@ -204,8 +207,8 @@ export default function FavoritePage() {
 							icon='playlist-plus'
 							onPress={() => {
 								const payloads = []
-							for (const selectedId of selected) {
-								const track = tracks.find((t) => t.id === selectedId)
+								for (const selectedId of selected) {
+									const track = tracks.find((t) => t.id === selectedId)
 									if (track) {
 										payloads.push({
 											track: track as Track,
@@ -232,23 +235,25 @@ export default function FavoritePage() {
 					trackMenuItems={trackMenuItems}
 					selection={selection}
 					ListHeaderComponent={
-						<PlaylistHeader
-							cover={coverRef ?? undefined}
-							title={favoriteData.pages[0].info.title}
-							subtitles={`${favoriteData.pages[0].info.upper.name}\u2009•\u2009${favoriteData.pages[0].info.media_count}\u2009首歌曲`}
-							description={favoriteData.pages[0].info.intro}
-							onClickMainButton={handleSync}
-							mainButtonIcon={'sync'}
-							linkedPlaylistId={linkedPlaylistId}
-							id={id}
-							primaryButtonColor={primaryButtonColor}
-							primaryButtonTextColor={primaryButtonTextColor}
-							secondaryButtonContainerColor={secondaryButtonContainerColor}
-							secondaryButtonIconColor={secondaryButtonIconColor}
-						/>
+						<ThemedRefreshListHeader refreshing={refreshing}>
+							<PlaylistHeader
+								cover={coverRef ?? undefined}
+								title={favoriteData.pages[0].info.title}
+								subtitles={`${favoriteData.pages[0].info.upper.name}\u2009•\u2009${favoriteData.pages[0].info.media_count}\u2009首歌曲`}
+								description={favoriteData.pages[0].info.intro}
+								onClickMainButton={handleSync}
+								mainButtonIcon={'sync'}
+								linkedPlaylistId={linkedPlaylistId}
+								id={id}
+								primaryButtonColor={primaryButtonColor}
+								primaryButtonTextColor={primaryButtonTextColor}
+								secondaryButtonContainerColor={secondaryButtonContainerColor}
+								secondaryButtonIconColor={secondaryButtonIconColor}
+							/>
+						</ThemedRefreshListHeader>
 					}
 					refreshControl={
-						<RefreshControl
+						<ThemedRefreshControl
 							refreshing={refreshing}
 							onRefresh={async () => {
 								setRefreshing(true)

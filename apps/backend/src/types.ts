@@ -1,3 +1,12 @@
+/** Cloudflare Worker bindings used by the Hono application. */
+export interface WorkerBindings {
+	KV: {
+		get(key: string): Promise<string | null>
+	}
+	DATABASE_URL: string
+	JWT_SECRET: string
+}
+
 /** JWT payload 结构 */
 export interface JwtTokenPayload {
 	sub: string // BBPlayer account id

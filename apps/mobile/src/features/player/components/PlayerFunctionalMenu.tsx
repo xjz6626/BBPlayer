@@ -15,7 +15,10 @@ import {
 } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
+import { useToggleDefaultFavorite } from '@/hooks/mutations/bilibili/favorite'
 import useCurrentTrack from '@/hooks/player/useCurrentTrack'
+import { useGetFavoriteForOneVideo } from '@/hooks/queries/bilibili/favorite'
+import { usePersonalInformation } from '@/hooks/queries/bilibili/user'
 import { useBatchDownloadStatus } from '@/hooks/queries/orpheus'
 import { useModalStore } from '@/hooks/stores/useModalStore'
 import { toastAndLogError } from '@/utils/error-handling'
@@ -90,6 +93,21 @@ export function PlayerFunctionalMenu({
 	)
 	const colors = useTheme().colors
 	const sheetRef = useRef<TrueSheet>(null)
+	const bvid =
+		currentTrack?.source === 'bilibili'
+			? currentTrack.bilibiliMetadata.bvid
+			: ''
+	const { data: personalInformation } = usePersonalInformation()
+	const { data: favoriteFolders, isFetching: isFavoriteStatusFetching } =
+		useGetFavoriteForOneVideo(bvid, personalInformation?.mid)
+	const defaultFolder =
+		favoriteFolders?.find((folder) => ((folder.attr ?? 0) >> 1) % 2 === 0) ??
+		favoriteFolders?.[0]
+	const isInDefaultFavorite = defaultFolder?.fav_state === 1
+	const {
+		mutate: toggleDefaultFavorite,
+		isPending: isFavoriteMutationPending,
+	} = useToggleDefaultFavorite()
 
 	const isPresented = useRef(false)
 
@@ -160,6 +178,18 @@ export function PlayerFunctionalMenu({
 		}
 	}, [currentTrack])
 
+	const defaultFavoriteHandler = useCallback(() => {
+		if (!bvid || !defaultFolder) {
+			toast.error('还没有可用的收藏夹')
+			return
+		}
+		toggleDefaultFavorite({
+			bvid,
+			folderId: defaultFolder.id,
+			favorite: !isInDefaultFavorite,
+		})
+	}, [bvid, defaultFolder, isInDefaultFavorite, toggleDefaultFavorite])
+
 	return (
 		<TrueSheet
 			ref={sheetRef}
@@ -214,6 +244,20 @@ export function PlayerFunctionalMenu({
 				<Divider />
 
 				<View style={{ paddingTop: 8 }}>
+					{currentTrack?.source === 'bilibili' && (
+						<List.Item
+							title={isInDefaultFavorite ? '取消默认收藏' : '收藏到默认收藏夹'}
+							description={defaultFolder?.title}
+							disabled={isFavoriteStatusFetching || isFavoriteMutationPending}
+							left={(props) => (
+								<List.Icon
+									{...props}
+									icon={isInDefaultFavorite ? 'star' : 'star-outline'}
+								/>
+							)}
+							onPress={() => handleAction(defaultFavoriteHandler)}
+						/>
+					)}
 					{currentTrack?.source === 'bilibili' && (
 						<List.Item
 							title='添加到 bilibili 收藏夹'

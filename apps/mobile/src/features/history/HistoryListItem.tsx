@@ -1,10 +1,11 @@
 import { memo } from 'react'
-import { useColorScheme, View } from 'react-native'
+import { View } from 'react-native'
 import { Touchable } from 'react-native-gesture-handler'
 import { Text, useTheme } from 'react-native-paper'
 
 import CoverWithPlaceHolder from '@/components/common/CoverWithPlaceHolder'
 import useIsCurrentTrack from '@/hooks/player/useIsCurrentTrack'
+import useResolvedColorScheme from '@/hooks/theme/useResolvedColorScheme'
 import { LIST_ITEM_COVER_SIZE } from '@/theme/dimensions'
 import type { Track } from '@/types/core/media'
 import { resolveTrackCover } from '@/utils/imageUrl'
@@ -24,7 +25,7 @@ export const HistoryListItem = memo(function HistoryListItem({
 	index,
 }: HistoryListItemProps) {
 	const { colors } = useTheme()
-	const dark = useColorScheme() === 'dark'
+	const dark = useResolvedColorScheme() === 'dark'
 	const isCurrentTrack = useIsCurrentTrack(item.track.uniqueKey)
 
 	return (

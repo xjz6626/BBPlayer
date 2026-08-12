@@ -12,6 +12,7 @@ import {
 	useCallback,
 	useDeferredValue,
 	useEffect,
+	useMemo,
 	useRef,
 	useState,
 } from 'react'
@@ -39,6 +40,8 @@ import SearchSuggestions, {
 	type SearchHistoryItem,
 } from '@/features/home/SearchSuggestions'
 import { SyncFailuresSheet } from '@/features/playlist/local/components/SyncFailuresSheet'
+import { useRemotePlaylist } from '@/features/playlist/remote/hooks/useRemotePlaylist'
+import { useBilibiliMusicRecommendations } from '@/hooks/queries/bilibili/recommendation'
 import { usePersonalInformation } from '@/hooks/queries/bilibili/user'
 import { usePlayHistoryHeatmap } from '@/hooks/queries/playHistory'
 import { useRecentPlaylists } from '@/hooks/queries/useRecentPlaylists'
@@ -47,7 +50,12 @@ import useSkinStore from '@/hooks/stores/useSkinStore'
 import useActiveSkin from '@/hooks/theme/useActiveSkin'
 import db from '@/lib/db/db'
 import * as schema from '@/lib/db/schema'
+import { mapBilibiliVideoDetailsToTrack } from '@/utils/bilibili-track'
 import { toastAndLogError } from '@/utils/error-handling'
+import {
+	getPlayHistoryHeatmapRange,
+	PLAY_HISTORY_HEATMAP_WEEK_STARTS_ON,
+} from '@/utils/playHistoryDateRange'
 import {
 	matchSearchStrategies,
 	navigateWithSearchStrategy,
@@ -90,7 +98,8 @@ function HomePage() {
 	const syncFailuresSheetRef = useRef<TrueSheet>(null)
 
 	const { data: personalInfo } = usePersonalInformation()
-	const { data: heatmapData } = usePlayHistoryHeatmap()
+	const heatmapRange = getPlayHistoryHeatmapRange()
+	const { data: heatmapData } = usePlayHistoryHeatmap(heatmapRange)
 
 	const { data: syncFailures } = useLiveQuery(
 		db
@@ -102,6 +111,14 @@ function HomePage() {
 	const hasSyncFailures = (syncFailures?.length ?? 0) > 0
 
 	const { data: recentPlaylists } = useRecentPlaylists()
+	const { data: recommendationData } = useBilibiliMusicRecommendations()
+	const { playTrack } = useRemotePlaylist()
+	const recommendations = useMemo(() => {
+		const items = recommendationData?.pages.flat() ?? []
+		return Array.from(
+			new Map(items.map((item) => [item.detail.bvid, item])).values(),
+		).slice(0, 8)
+	}, [recommendationData])
 
 	const { markInteractive } = useObserve()
 
@@ -379,6 +396,9 @@ function HomePage() {
 					>
 						<WeeklyHeatMap
 							data={heatmapData || {}}
+							startDate={heatmapRange.startDate}
+							endDate={heatmapRange.endDate}
+							weekStartsOn={PLAY_HISTORY_HEATMAP_WEEK_STARTS_ON}
 							cellSize={18}
 							cellGap={4}
 							cellRadius={4}
@@ -521,8 +541,132 @@ function HomePage() {
 										</Text>
 									</Touchable>
 								)}
+
+								{hasBilibiliCookie() && (
+									<Touchable
+										androidRipple={{}}
+										key='recommendations'
+										style={[
+											styles.quickAccessCard,
+											{ backgroundColor: colors.surfaceVariant },
+										]}
+										onPress={() => router.push('/recommendations')}
+									>
+										<View style={styles.quickAccessIcon}>
+											<Icon
+												source='auto-awesome'
+												size={32}
+												color={colors.onSurfaceVariant}
+											/>
+										</View>
+										<Text
+											variant='labelMedium'
+											style={styles.quickAccessText}
+										>
+											为你推荐
+										</Text>
+									</Touchable>
+								)}
+
+								{hasBilibiliCookie() && (
+									<Touchable
+										androidRipple={{}}
+										key='weekly-rank'
+										style={[
+											styles.quickAccessCard,
+											{ backgroundColor: colors.surfaceVariant },
+										]}
+										onPress={() => router.push('/weekly-rank')}
+									>
+										<View style={styles.quickAccessIcon}>
+											<Icon
+												source='podium'
+												size={32}
+												color={colors.onSurfaceVariant}
+											/>
+										</View>
+										<Text
+											variant='labelMedium'
+											style={styles.quickAccessText}
+										>
+											周刊虚拟歌手榜
+										</Text>
+									</Touchable>
+								)}
 							</ScrollView>
 						</View>
+
+						{recommendations.length > 0 && (
+							<View style={styles.recommendationSection}>
+								<View style={styles.sectionHeaderRow}>
+									<Text
+										variant='titleMedium'
+										style={styles.sectionHeaderTitle}
+									>
+										为你推荐
+									</Text>
+									<Touchable
+										androidRipple={{}}
+										onPress={() => router.push('/recommendations')}
+									>
+										<Text style={{ color: colors.primary }}>查看更多</Text>
+									</Touchable>
+								</View>
+								<ScrollView
+									horizontal
+									showsHorizontalScrollIndicator={false}
+									contentContainerStyle={styles.recommendationScrollContent}
+								>
+									{recommendations.map((item) => (
+										<Touchable
+											androidRipple={{}}
+											key={item.detail.bvid}
+											style={styles.recommendationCard}
+											onPress={() =>
+												void playTrack(
+													mapBilibiliVideoDetailsToTrack(item.detail),
+												)
+											}
+										>
+											<Image
+												source={item.detail.pic}
+												style={styles.recommendationCover}
+												contentFit='cover'
+											/>
+											{item.badges.length > 0 && (
+												<View style={styles.badgeRow}>
+													{item.badges.map((badge) => (
+														<View
+															key={badge}
+															style={[
+																styles.badge,
+																{ backgroundColor: colors.primaryContainer },
+															]}
+														>
+															<Text variant='labelSmall'>{badge}</Text>
+														</View>
+													))}
+												</View>
+											)}
+											<Text
+												variant='labelLarge'
+												numberOfLines={2}
+												style={styles.recommendationTitle}
+											>
+												{item.detail.title}
+											</Text>
+											<Text
+												variant='bodySmall'
+												numberOfLines={1}
+												style={{ color: colors.onSurfaceVariant }}
+											>
+												{item.detail.owner.name}
+											</Text>
+										</Touchable>
+									))}
+								</ScrollView>
+							</View>
+						)}
 
 						{/* 近期歌单 */}
 						{recentPlaylists && recentPlaylists.length > 0 && (
@@ -662,12 +806,58 @@ const styles = StyleSheet.create({
 	quickAccessText: {
 		fontWeight: '600',
 	},
+	quickAccessIcon: {
+		width: 48,
+		height: 48,
+		borderRadius: 24,
+		justifyContent: 'center',
+		alignItems: 'center',
+	},
 	quickAccessScrollContent: {
 		paddingHorizontal: 16,
 		gap: 16,
 	},
 	recentPlaylistsSection: {
 		marginBottom: 32,
+	},
+	recommendationSection: {
+		marginBottom: 32,
+	},
+	sectionHeaderRow: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		justifyContent: 'space-between',
+		paddingHorizontal: 16,
+		marginBottom: 16,
+	},
+	sectionHeaderTitle: {
+		fontWeight: 'bold',
+	},
+	recommendationScrollContent: {
+		paddingHorizontal: 16,
+		gap: 16,
+	},
+	recommendationCard: {
+		width: 220,
+	},
+	recommendationCover: {
+		width: 220,
+		height: 124,
+		borderRadius: 12,
+	},
+	badgeRow: {
+		flexDirection: 'row',
+		gap: 6,
+		marginTop: 8,
+	},
+	badge: {
+		borderRadius: 6,
+		paddingHorizontal: 6,
+		paddingVertical: 2,
+	},
+	recommendationTitle: {
+		marginTop: 8,
+		fontWeight: '600',
 	},
 	horizontalScrollContent: {
 		paddingHorizontal: 16,

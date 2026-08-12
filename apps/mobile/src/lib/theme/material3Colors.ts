@@ -8,49 +8,56 @@ import type { MD3Colors } from 'react-native-paper/lib/typescript/types'
  */
 export function buildMaterial3PaperColors(
 	colorScheme: ColorSchemeName,
+	useDynamicColors = true,
 ): MD3Colors {
-	const d = Color.android.dynamic
+	const d = useDynamicColors ? Color.android.dynamic : null
 	const fallback =
 		colorScheme === 'dark' ? MD3DarkTheme.colors : MD3LightTheme.colors
 
 	return {
-		primary: (d.primary as string) ?? fallback.primary,
+		primary: (d?.primary as string | null) ?? fallback.primary,
 		primaryContainer:
-			(d.primaryContainer as string) ?? fallback.primaryContainer,
-		secondary: (d.secondary as string) ?? fallback.secondary,
+			(d?.primaryContainer as string | null) ?? fallback.primaryContainer,
+		secondary: (d?.secondary as string | null) ?? fallback.secondary,
 		secondaryContainer:
-			(d.secondaryContainer as string) ?? fallback.secondaryContainer,
-		tertiary: (d.tertiary as string) ?? fallback.tertiary,
+			(d?.secondaryContainer as string | null) ?? fallback.secondaryContainer,
+		tertiary: (d?.tertiary as string | null) ?? fallback.tertiary,
 		tertiaryContainer:
-			(d.tertiaryContainer as string) ?? fallback.tertiaryContainer,
-		surface: (d.surface as string) ?? fallback.surface,
-		surfaceVariant: (d.surfaceVariant as string) ?? fallback.surfaceVariant,
-		background: (d.background as string) ?? fallback.background,
-		error: (d.error as string) ?? fallback.error,
-		errorContainer: (d.errorContainer as string) ?? fallback.errorContainer,
-		onPrimary: (d.onPrimary as string) ?? fallback.onPrimary,
+			(d?.tertiaryContainer as string | null) ?? fallback.tertiaryContainer,
+		surface: (d?.surface as string | null) ?? fallback.surface,
+		surfaceVariant:
+			(d?.surfaceVariant as string | null) ?? fallback.surfaceVariant,
+		background: (d?.background as string | null) ?? fallback.background,
+		error: (d?.error as string | null) ?? fallback.error,
+		errorContainer:
+			(d?.errorContainer as string | null) ?? fallback.errorContainer,
+		onPrimary: (d?.onPrimary as string | null) ?? fallback.onPrimary,
 		onPrimaryContainer:
-			(d.onPrimaryContainer as string) ?? fallback.onPrimaryContainer,
-		onSecondary: (d.onSecondary as string) ?? fallback.onSecondary,
+			(d?.onPrimaryContainer as string | null) ?? fallback.onPrimaryContainer,
+		onSecondary: (d?.onSecondary as string | null) ?? fallback.onSecondary,
 		onSecondaryContainer:
-			(d.onSecondaryContainer as string) ?? fallback.onSecondaryContainer,
-		onTertiary: (d.onTertiary as string) ?? fallback.onTertiary,
+			(d?.onSecondaryContainer as string | null) ??
+			fallback.onSecondaryContainer,
+		onTertiary: (d?.onTertiary as string | null) ?? fallback.onTertiary,
 		onTertiaryContainer:
-			(d.onTertiaryContainer as string) ?? fallback.onTertiaryContainer,
-		onSurface: (d.onSurface as string) ?? fallback.onSurface,
+			(d?.onTertiaryContainer as string | null) ?? fallback.onTertiaryContainer,
+		onSurface: (d?.onSurface as string | null) ?? fallback.onSurface,
 		onSurfaceVariant:
-			(d.onSurfaceVariant as string) ?? fallback.onSurfaceVariant,
-		onError: (d.onError as string) ?? fallback.onError,
+			(d?.onSurfaceVariant as string | null) ?? fallback.onSurfaceVariant,
+		onError: (d?.onError as string | null) ?? fallback.onError,
 		onErrorContainer:
-			(d.onErrorContainer as string) ?? fallback.onErrorContainer,
-		onBackground: (d.onBackground as string) ?? fallback.onBackground,
-		outline: (d.outline as string) ?? fallback.outline,
-		outlineVariant: (d.outlineVariant as string) ?? fallback.outlineVariant,
+			(d?.onErrorContainer as string | null) ?? fallback.onErrorContainer,
+		onBackground: (d?.onBackground as string | null) ?? fallback.onBackground,
+		outline: (d?.outline as string | null) ?? fallback.outline,
+		outlineVariant:
+			(d?.outlineVariant as string | null) ?? fallback.outlineVariant,
 		// Renamed in Expo Router: surfaceInverse → inverseSurface
-		inverseSurface: (d.surfaceInverse as string) ?? fallback.inverseSurface,
+		inverseSurface:
+			(d?.surfaceInverse as string | null) ?? fallback.inverseSurface,
 		inverseOnSurface:
-			(d.onSurfaceInverse as string) ?? fallback.inverseOnSurface,
-		inversePrimary: (d.primaryInverse as string) ?? fallback.inversePrimary,
+			(d?.onSurfaceInverse as string | null) ?? fallback.inverseOnSurface,
+		inversePrimary:
+			(d?.primaryInverse as string | null) ?? fallback.inversePrimary,
 		shadow: fallback.shadow,
 		scrim: fallback.scrim,
 		// Not available from Expo Router dynamic colors — use Paper defaults

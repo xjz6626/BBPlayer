@@ -18,13 +18,22 @@ import { alert } from '@/components/modals/AlertModal'
 import NowPlayingBar from '@/components/NowPlayingBar'
 import useCurrentTrack from '@/hooks/player/useCurrentTrack'
 import useAppStore from '@/hooks/stores/useAppStore'
+import useSkinStore from '@/hooks/stores/useSkinStore'
+import useActiveSkin from '@/hooks/theme/useActiveSkin'
+import useResolvedColorScheme from '@/hooks/theme/useResolvedColorScheme'
+import { getActiveSkinColorScheme } from '@/lib/theme/colorScheme'
+import type { AppThemeMode } from '@/types/core/appStore'
 
 export default function AppearanceSettingsPage() {
 	const router = useRouter()
 	const colors = useTheme().colors
 	const insets = useSafeAreaInsets()
 	const haveTrack = useCurrentTrack()
+	const activeSkin = useActiveSkin()
+	const activeSkinIndex = useSkinStore((state) => state.activeSkinIndex)
+	const resolvedColorScheme = useResolvedColorScheme()
 
+	const themeMode = useAppStore((state) => state.settings.themeMode)
 	const playerBackgroundStyle = useAppStore(
 		(state) => state.settings.playerBackgroundStyle,
 	)
@@ -39,6 +48,7 @@ export default function AppearanceSettingsPage() {
 	)
 	const setSettings = useAppStore((state) => state.setSettings)
 
+	const [themeModeMenuVisible, setThemeModeMenuVisible] = useState(false)
 	const [playerBGMenuVisible, setPlayerBGMenuVisible] = useState(false)
 	const [nowPlayerBarMenuVisible, setNowPlayerBarMenuVisible] = useState(false)
 
@@ -51,6 +61,20 @@ export default function AppearanceSettingsPage() {
 		setSettings({ playerBackgroundStyle: style })
 		setPlayerBGMenuVisible(false)
 	}
+
+	const setThemeMode = (mode: AppThemeMode) => {
+		setSettings({ themeMode: mode })
+		setThemeModeMenuVisible(false)
+	}
+
+	const skinColorScheme = getActiveSkinColorScheme(activeSkin, activeSkinIndex)
+	const resolvedColorSchemeLabel =
+		resolvedColorScheme === 'dark' ? '深色' : '浅色'
+	const themeModeDescription = skinColorScheme
+		? `动态主题优先使用${skinColorScheme === 'dark' ? '深色' : '浅色'}模式`
+		: themeMode === 'system'
+			? `跟随系统，当前为${resolvedColorSchemeLabel}模式`
+			: `当前为${resolvedColorSchemeLabel}模式`
 
 	const handleSpectrumToggle = () => {
 		if (enableSpectrumVisualizer) {
@@ -105,6 +129,52 @@ export default function AppearanceSettingsPage() {
 					{ paddingBottom: insets.bottom + (haveTrack ? 70 + 20 : 20) },
 				]}
 			>
+				<View style={styles.settingRow}>
+					<View style={styles.settingTextContainer}>
+						<Text>应用主题</Text>
+						<Text
+							variant='bodySmall'
+							style={{ color: colors.onSurfaceVariant }}
+						>
+							{themeModeDescription}
+						</Text>
+					</View>
+					<FunctionalMenu
+						visible={themeModeMenuVisible}
+						onDismiss={() => setThemeModeMenuVisible(false)}
+						anchor={
+							<IconButton
+								icon={
+									resolvedColorScheme === 'dark'
+										? 'weather-night'
+										: 'white-balance-sunny'
+								}
+								size={20}
+								onPress={() => setThemeModeMenuVisible(true)}
+							/>
+						}
+					>
+						<UniversalCheckboxItem
+							mode='ios'
+							label='跟随系统'
+							status={themeMode === 'system' ? 'checked' : 'unchecked'}
+							onPress={() => setThemeMode('system')}
+						/>
+						<UniversalCheckboxItem
+							mode='ios'
+							label='浅色模式'
+							status={themeMode === 'light' ? 'checked' : 'unchecked'}
+							onPress={() => setThemeMode('light')}
+						/>
+						<UniversalCheckboxItem
+							mode='ios'
+							label='深色模式'
+							status={themeMode === 'dark' ? 'checked' : 'unchecked'}
+							onPress={() => setThemeMode('dark')}
+						/>
+					</FunctionalMenu>
+				</View>
+
 				<View style={styles.settingRow}>
 					<View style={styles.settingTextContainer}>
 						<Text>显示音频频谱</Text>

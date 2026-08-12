@@ -7,9 +7,18 @@ import { errAsync, okAsync, Result, ResultAsync } from 'neverthrow'
 
 import { useAppStore } from '@/hooks/stores/useAppStore'
 import { bilibiliApi } from '@/lib/api/bilibili/api'
-import { kugouApi as kugouApiInstance, type KugouApi } from '@/lib/api/kugou/api'
-import { neteaseApi as neteaseApiInstance, type NeteaseApi } from '@/lib/api/netease/api'
-import { qqMusicApi as qqMusicApiInstance, type QQMusicApi } from '@/lib/api/qqmusic/api'
+import {
+	kugouApi as kugouApiInstance,
+	type KugouApi,
+} from '@/lib/api/kugou/api'
+import {
+	neteaseApi as neteaseApiInstance,
+	type NeteaseApi,
+} from '@/lib/api/netease/api'
+import {
+	qqMusicApi as qqMusicApiInstance,
+	type QQMusicApi,
+} from '@/lib/api/qqmusic/api'
 import type { CustomError } from '@/lib/errors'
 import { FileSystemError, LyricNotFoundError } from '@/lib/errors'
 import { trackService } from '@/lib/services/trackService'
@@ -20,6 +29,10 @@ import type {
 	LyricSearchResult,
 	ParsedLrc,
 } from '@/types/player/lyrics'
+import {
+	convertBilibiliSubtitleToSpl,
+	selectBilibiliSubtitle,
+} from '@/utils/bilibiliSubtitle'
 import { toastAndLogError } from '@/utils/error-handling'
 import log from '@/utils/log'
 import { isActuallyOffline } from '@/utils/network'
@@ -165,6 +178,89 @@ class LyricService {
 		})
 	}
 
+	private resolveBilibiliCid(
+		track: BilibiliTrack,
+	): ResultAsync<number, CustomError> {
+		if (track.bilibiliMetadata.cid) {
+			return okAsync(track.bilibiliMetadata.cid)
+		}
+
+		if (track.bilibiliMetadata.isMultiPage) {
+			const cidFromKey = Number(track.uniqueKey.split('::').at(-1))
+			if (Number.isSafeInteger(cidFromKey) && cidFromKey > 0) {
+				return okAsync(cidFromKey)
+			}
+			return errAsync(
+				new LyricNotFoundError('多 P 视频缺少 CID，无法确定对应的 B 站字幕'),
+			)
+		}
+
+		return bilibiliApi
+			.getPageList({ bvid: track.bilibiliMetadata.bvid })
+			.andThen((pages) => {
+				const cid = pages[0]?.cid
+				return cid
+					? okAsync(cid)
+					: errAsync(new LyricNotFoundError('B 站视频没有可用分 P 信息'))
+			})
+	}
+
+	private getBilibiliSubtitleLyrics(
+		track: BilibiliTrack,
+	): ResultAsync<LyricProviderResponseData, CustomError> {
+		return this.resolveBilibiliCid(track)
+			.andThen((cid) =>
+				bilibiliApi.getWebPlayerInfo({
+					bvid: track.bilibiliMetadata.bvid,
+					cid,
+				}),
+			)
+			.andThen((playerInfo) => {
+				const subtitle = selectBilibiliSubtitle(
+					playerInfo.subtitle?.subtitles ?? [],
+				)
+				if (!subtitle) {
+					return errAsync(new LyricNotFoundError('B 站视频没有可用字幕'))
+				}
+
+				return bilibiliApi
+					.getSubtitle({ subtitleUrl: subtitle.subtitle_url })
+					.andThen((subtitleData) => {
+						const lrc = convertBilibiliSubtitleToSpl(subtitleData)
+						if (!lrc) {
+							return errAsync(new LyricNotFoundError('B 站字幕内容为空'))
+						}
+
+						logger.info('音乐平台歌词均获取失败，已回退到 B 站字幕', {
+							trackId: track.uniqueKey,
+							language: subtitle.lan,
+							subtitleType: subtitle.type === 0 ? 'cc' : 'ai',
+						})
+						return okAsync({ lrc } satisfies LyricProviderResponseData)
+					})
+			})
+	}
+
+	private getBestMatchedLyricsWithFallback(
+		track: Track,
+		preciseKeyword?: string,
+		source?: 'auto' | 'netease' | 'qqmusic' | 'kugou',
+	): ResultAsync<LyricProviderResponseData, CustomError> {
+		return this.getBestMatchedLyrics(track, preciseKeyword, source).orElse(
+			(primaryError) => {
+				if (track.source !== 'bilibili') return errAsync(primaryError)
+
+				return this.getBilibiliSubtitleLyrics(track).orElse((fallbackError) => {
+					logger.debug('B 站字幕回退不可用，保留原歌词搜索错误', {
+						trackId: track.uniqueKey,
+						fallbackError,
+					})
+					return errAsync(primaryError)
+				})
+			},
+		)
+	}
+
 	/**
 	 * 优先从本地缓存中获取歌词，如果没有则从多个数据源并行查找，返回最匹配的歌词并进行缓存。
 	 * @param track
@@ -192,16 +288,22 @@ class LyricService {
 					.andThen((musicName) => {
 						const lyricSource =
 							useAppStore.getState().settings.lyricSource ?? 'auto'
-						return this.getBestMatchedLyrics(track, musicName, lyricSource)
+						return this.getBestMatchedLyricsWithFallback(
+							track,
+							musicName,
+							lyricSource,
+						)
 					})
 					.andThen((lyrics) => this.processAndSaveLyrics(lyrics, track))
 			}
 
 			// 标准源处理
 			const lyricSource = useAppStore.getState().settings.lyricSource ?? 'auto'
-			return this.getBestMatchedLyrics(track, undefined, lyricSource).andThen(
-				(lyrics) => this.processAndSaveLyrics(lyrics, track),
-			)
+			return this.getBestMatchedLyricsWithFallback(
+				track,
+				undefined,
+				lyricSource,
+			).andThen((lyrics) => this.processAndSaveLyrics(lyrics, track))
 		}
 
 		// 先尝试本地获取
@@ -652,5 +754,9 @@ class LyricService {
 	}
 }
 
-const lyricService = new LyricService(neteaseApiInstance, qqMusicApiInstance, kugouApiInstance)
+const lyricService = new LyricService(
+	neteaseApiInstance,
+	qqMusicApiInstance,
+	kugouApiInstance,
+)
 export default lyricService

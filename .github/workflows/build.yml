@@ -115,7 +115,7 @@ jobs:
         id: prepare-vars
         run: |
           APP_VERSION=$(node -p "require('./apps/mobile/package.json').version")
-          VERSION_CODE=$(git rev-list --count HEAD)
+          VERSION_CODE=$(node scripts/version-code.mjs)
 
           # e.g. bbplayer-v1.0.0-prod-arm64-v8a
           APK_NAME="bbplayer-v${APP_VERSION}-${{ env.BUILD_TYPE }}-${{ matrix.arch }}"

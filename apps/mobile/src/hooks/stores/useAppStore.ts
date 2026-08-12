@@ -104,6 +104,7 @@ export const useAppStore = create<AppState>()(
 					enableDebugLog: false,
 					enableOldSchoolStyleLyric: false,
 					enableSpectrumVisualizer: false,
+					themeMode: 'system',
 					playerBackgroundStyle: 'gradient',
 					nowPlayingBarStyle: 'float',
 					lyricSource: 'netease',

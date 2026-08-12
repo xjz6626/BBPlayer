@@ -13,7 +13,6 @@ import {
 } from 'drizzle-orm'
 import { Hono } from 'hono'
 
-import { createDb } from '../db'
 import type { DrizzleDb } from '../db'
 import {
 	playlistMembers,
@@ -23,7 +22,14 @@ import {
 	users,
 } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
-import type { ChangeEvent, JwtTokenPayload, TrackInput } from '../types'
+import { databaseMiddleware } from '../middleware/database'
+import type { DatabaseVariables } from '../middleware/database'
+import type {
+	ChangeEvent,
+	JwtTokenPayload,
+	TrackInput,
+	WorkerBindings,
+} from '../types'
 import {
 	createPlaylistRequestSchema,
 	getPlaylistChangesRequestSchema,
@@ -44,15 +50,15 @@ const validationHook: Parameters<typeof arktypeValidator>[2] = (result, c) => {
 const PLAYLIST_PREVIEW_LIMIT = 30
 
 type HonoEnv = {
-	Bindings: Env
-	Variables: { jwtPayload: JwtTokenPayload }
+	Bindings: WorkerBindings
+	Variables: { jwtPayload: JwtTokenPayload } & DatabaseVariables
 }
 
 const playlistsRoute = new Hono<HonoEnv>()
 	// 无需鉴权的公开接口
-	.get('/:id/preview', async (c) => {
+	.get('/:id/preview', databaseMiddleware, async (c) => {
 		const playlistId = c.req.param('id')
-		const { db } = await createDb(c.env.DATABASE_URL)
+		const db = c.var.db
 
 		const [playlist] = await db
 			.select({
@@ -155,6 +161,7 @@ const playlistsRoute = new Hono<HonoEnv>()
 	})
 	// 以下需要鉴权
 	.use('*', authMiddleware)
+	.use('*', databaseMiddleware)
 	.post(
 		'/',
 		arktypeValidator('json', createPlaylistRequestSchema, validationHook),
@@ -162,7 +169,7 @@ const playlistsRoute = new Hono<HonoEnv>()
 			const { sub } = c.var.jwtPayload
 			const userId = sub
 			const body = c.req.valid('json')
-			const { db } = await createDb(c.env.DATABASE_URL)
+			const db = c.var.db
 
 			// 三步操作（创建歌单 → 写入 owner 成员 → 可选初始曲目）作为原子事务
 			const playlist = await db.transaction(async (tx) => {
@@ -203,7 +210,7 @@ const playlistsRoute = new Hono<HonoEnv>()
 			const userId = sub
 			const playlistId = c.req.param('id')
 			const body = c.req.valid('json')
-			const { db } = await createDb(c.env.DATABASE_URL)
+			const db = c.var.db
 
 			// 权限校验
 			const member = await getMember(db, playlistId, userId)
@@ -235,7 +242,7 @@ const playlistsRoute = new Hono<HonoEnv>()
 			const userId = sub
 			const playlistId = c.req.param('id')
 			const { changes } = c.req.valid('json')
-			const { db } = await createDb(c.env.DATABASE_URL)
+			const db = c.var.db
 
 			const member = await getMember(db, playlistId, userId)
 			if (!member || member.role === 'subscriber') {
@@ -251,9 +258,9 @@ const playlistsRoute = new Hono<HonoEnv>()
 				(a, b) => a.operation_at - b.operation_at,
 			)
 
-		const upsertChanges = sorted.filter((ch) => ch.op === 'upsert')
-		const removeChanges = sorted.filter((ch) => ch.op === 'remove')
-		const reorderChanges = sorted.filter((ch) => ch.op === 'reorder')
+			const upsertChanges = sorted.filter((ch) => ch.op === 'upsert')
+			const removeChanges = sorted.filter((ch) => ch.op === 'remove')
+			const reorderChanges = sorted.filter((ch) => ch.op === 'reorder')
 
 			await db.transaction(async (tx) => {
 				// 1. 批量 upsert shared_tracks（资源池）
@@ -383,7 +390,7 @@ const playlistsRoute = new Hono<HonoEnv>()
 			const userId = sub
 			const playlistId = c.req.param('id')
 			const sinceMs = c.req.valid('query').since
-			const { db } = await createDb(c.env.DATABASE_URL)
+			const db = c.var.db
 
 			// 先判断歌单是否存在且未被删除
 			const [playlist] = await db
@@ -518,7 +525,7 @@ const playlistsRoute = new Hono<HonoEnv>()
 				typeof body?.invite_code === 'string'
 					? body.invite_code.trim()
 					: undefined
-			const { db } = await createDb(c.env.DATABASE_URL)
+			const db = c.var.db
 
 			// 歌单必须存在且未删除
 			const [playlist] = await db
@@ -577,7 +584,7 @@ const playlistsRoute = new Hono<HonoEnv>()
 	.get('/:id/invite', async (c) => {
 		const { sub } = c.var.jwtPayload
 		const playlistId = c.req.param('id')
-		const { db } = await createDb(c.env.DATABASE_URL)
+		const db = c.var.db
 
 		const [playlist] = await db
 			.select({
@@ -604,7 +611,7 @@ const playlistsRoute = new Hono<HonoEnv>()
 	.post('/:id/invite/rotate', async (c) => {
 		const { sub } = c.var.jwtPayload
 		const playlistId = c.req.param('id')
-		const { db } = await createDb(c.env.DATABASE_URL)
+		const db = c.var.db
 
 		const [playlist] = await db
 			.select({ ownerId: sharedPlaylists.ownerId })
@@ -651,7 +658,7 @@ const playlistsRoute = new Hono<HonoEnv>()
 		const { sub } = c.var.jwtPayload
 		const userId = sub
 		const playlistId = c.req.param('id')
-		const { db } = await createDb(c.env.DATABASE_URL)
+		const db = c.var.db
 
 		const member = await getMember(db, playlistId, userId)
 		if (!member || member.role !== 'owner') {
@@ -679,7 +686,7 @@ const playlistsRoute = new Hono<HonoEnv>()
 		const { sub } = c.var.jwtPayload
 		const userId = sub
 		const playlistId = c.req.param('id')
-		const { db } = await createDb(c.env.DATABASE_URL)
+		const db = c.var.db
 
 		const member = await getMember(db, playlistId, userId)
 		if (!member || (member.role !== 'owner' && member.role !== 'editor')) {
@@ -721,7 +728,7 @@ const playlistsRoute = new Hono<HonoEnv>()
 		const { sub } = c.var.jwtPayload
 		const userId = sub
 		const playlistId = c.req.param('id')
-		const { db } = await createDb(c.env.DATABASE_URL)
+		const db = c.var.db
 
 		const member = await getMember(db, playlistId, userId)
 		if (!member) {

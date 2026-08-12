@@ -3,11 +3,12 @@ import { TrueSheet as TrueSheetComponent } from '@lodev09/react-native-true-shee
 import { and, eq, inArray } from 'drizzle-orm'
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite'
 import { forwardRef, useState } from 'react'
-import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native'
+import { ScrollView, StyleSheet, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { Icon, Text, useTheme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
+import ActivityIndicator from '@/components/common/ActivityIndicator'
 import Button from '@/components/common/Button'
 import db from '@/lib/db/db'
 import * as schema from '@/lib/db/schema'

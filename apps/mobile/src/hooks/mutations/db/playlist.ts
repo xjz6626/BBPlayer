@@ -5,10 +5,15 @@ import { playlistKeys } from '@/hooks/queries/db/playlist'
 import { ensureBBPlayerToken } from '@/lib/api/bbplayer/client'
 import { queryClient } from '@/lib/config/queryClient'
 import { CustomError } from '@/lib/errors'
+import { createValidationError } from '@/lib/errors/service'
 import { playlistFacade } from '@/lib/facades/playlist'
 import { sharedPlaylistFacade } from '@/lib/facades/sharedPlaylist'
 import type { FavoriteSyncProgress } from '@/lib/facades/syncBilibiliPlaylist'
 import { syncFacade } from '@/lib/facades/syncBilibiliPlaylist'
+import {
+	bilibiliTextPlaylistImportService,
+	type BilibiliTextImportProgress,
+} from '@/lib/services/bilibiliTextPlaylistImportService'
 import { playlistService } from '@/lib/services/playlistService'
 import type { Playlist } from '@/types/core/media'
 import type { CreateArtistPayload } from '@/types/services/artist'
@@ -76,6 +81,67 @@ export const usePlaylistSync = () => {
 				error,
 				SCOPE,
 			)
+		},
+	})
+}
+
+export const useImportBilibiliTextPlaylist = () => {
+	return useMutation({
+		mutationKey: ['db', 'playlist', 'importBilibiliTextPlaylist'],
+		mutationFn: async ({
+			title,
+			text,
+			signal,
+			onProgress,
+		}: {
+			title: string
+			text: string
+			signal?: AbortSignal
+			onProgress?: (progress: BilibiliTextImportProgress) => void
+		}) => {
+			const resolved = await bilibiliTextPlaylistImportService.resolve(text, {
+				signal,
+				onProgress,
+			})
+			if (resolved.recognizedCount === 0) {
+				throw createValidationError('没有识别到 B 站视频链接或 BV/av 号')
+			}
+			if (resolved.tracks.length === 0) {
+				throw createValidationError(
+					resolved.failures[0]?.reason ?? '没有获取到可以导入的歌曲',
+				)
+			}
+
+			const saveResult = await playlistFacade.createPlaylistFromBilibiliTracks({
+				title,
+				description: `从 B 站评论文本导入，共识别 ${resolved.recognizedCount} 条链接`,
+				tracks: resolved.tracks,
+			})
+			if (saveResult.isErr()) throw saveResult.error
+
+			return { ...resolved, ...saveResult.value }
+		},
+		onSuccess: async ({ playlistId, savedCount, failures }) => {
+			toast.success(
+				failures.length > 0
+					? `已导入 ${savedCount} 首，跳过 ${failures.length} 条`
+					: `已导入 ${savedCount} 首歌曲`,
+			)
+			await Promise.all([
+				queryClient.invalidateQueries({
+					queryKey: playlistKeys.playlistLists(),
+				}),
+				queryClient.invalidateQueries({
+					queryKey: playlistKeys.playlistContents(playlistId),
+				}),
+				queryClient.invalidateQueries({
+					queryKey: playlistKeys.playlistMetadata(playlistId),
+				}),
+			])
+		},
+		onError: (error) => {
+			if (error instanceof Error && error.name === 'AbortError') return
+			toastAndLogError('从文本导入播放列表失败', error, SCOPE)
 		},
 	})
 }

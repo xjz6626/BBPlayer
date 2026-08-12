@@ -2,6 +2,48 @@ import type { SkinAssetDeclaration } from './schema'
 
 export type { SkinAssetDeclaration }
 
+export interface SkinTabIconUrls {
+	default: string | null
+	selected: string | null
+}
+
+const skinAssetIdentity = (url: string | null): string | null => {
+	if (!url) return null
+	const withoutQueryOrFragment = url.trim().split(/[?#]/, 1)[0]
+	return withoutQueryOrFragment.replace(/^[a-z][a-z\d+.-]*:\/\/[^/]+/i, '')
+}
+
+/**
+ * Some Bilibili skins reuse the channel artwork for the dynamic tab. Prefer the
+ * complete shop icon pair for the library only when that collision is present.
+ */
+export const resolveLibraryTabIconUrls = (
+	skin: SkinAssetDeclaration['skins'][number],
+): SkinTabIconUrls => {
+	const channelDefault = skinAssetIdentity(skin.tail_icon_channel)
+	const channelSelected = skinAssetIdentity(skin.tail_icon_selected_channel)
+	const dynamicDefault = skinAssetIdentity(skin.tail_icon_dynamic)
+	const dynamicSelected = skinAssetIdentity(skin.tail_icon_selected_dynamic)
+	const iconsCollide =
+		(channelDefault !== null && channelDefault === dynamicDefault) ||
+		(channelSelected !== null && channelSelected === dynamicSelected)
+	const hasShopPair = Boolean(
+		skin.tail_icon_shop && skin.tail_icon_selected_shop,
+	)
+
+	if (iconsCollide && hasShopPair) {
+		return {
+			default: skin.tail_icon_shop,
+			selected: skin.tail_icon_selected_shop,
+		}
+	}
+
+	return {
+		default: skin.tail_icon_channel,
+		selected: skin.tail_icon_selected_channel,
+	}
+}
+
 export interface SkinAssetFeatures {
 	avatarFrames: boolean
 	cardBackgrounds: boolean
@@ -58,6 +100,11 @@ export interface AppSkin {
 		tabBar: {
 			background: string | null
 			icons: {
+				/** Optional only for skin.json files installed before the dynamic tab was added. */
+				dynamic?: {
+					default: string | null
+					selected: string | null
+				}
 				home: {
 					default: string | null
 					selected: string | null

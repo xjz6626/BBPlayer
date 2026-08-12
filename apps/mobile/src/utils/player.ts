@@ -3,6 +3,7 @@ import type { Result } from 'neverthrow'
 import { err, ok } from 'neverthrow'
 
 import { trackKeys } from '@/hooks/queries/db/track'
+import { playHistoryKeys } from '@/hooks/queries/playHistory'
 import useAppStore from '@/hooks/stores/useAppStore'
 import { bilibiliApi } from '@/lib/api/bilibili/api'
 import { queryClient } from '@/lib/config/queryClient'
@@ -201,11 +202,13 @@ async function addToQueue({
 	}
 }
 
-function getInternalPlayUri(track: Track) {
+export function getInternalPlayUri(track: Track) {
 	if (track.source === 'bilibili') {
-		return track.bilibiliMetadata.isMultiPage
-			? `orpheus://bilibili?bvid=${track.bilibiliMetadata.bvid}&cid=${track.bilibiliMetadata.cid}&hires=0&dolby=0`
-			: `orpheus://bilibili?bvid=${track.bilibiliMetadata.bvid}&hires=0&dolby=0`
+		const cidParam =
+			track.bilibiliMetadata.cid == null
+				? ''
+				: `&cid=${track.bilibiliMetadata.cid}`
+		return `orpheus://bilibili?bvid=${track.bilibiliMetadata.bvid}${cidParam}&hires=0&dolby=0`
 	}
 	if (track.source === 'local' && track.localMetadata) {
 		return track.localMetadata.localPath
@@ -254,6 +257,9 @@ async function finalizeAndRecordCurrentTrack(
 		void queryClient.invalidateQueries({
 			queryKey: trackKeys.history(),
 		})
+		void queryClient.invalidateQueries({
+			queryKey: playHistoryKeys.all,
+		})
 
 		void reportPlaybackHistory(uniqueKey, effectivePlayed).catch((error) =>
 			logger.error('上报播放历史失败', error),
@@ -267,6 +273,5 @@ export {
 	addToQueue,
 	convertToOrpheusTrack,
 	finalizeAndRecordCurrentTrack,
-	getInternalPlayUri,
 	reportPlaybackHistory,
 }

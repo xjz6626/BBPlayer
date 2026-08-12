@@ -1,13 +1,16 @@
 import { Galeria } from '@nandorojo/galeria'
 import { Image } from 'expo-image'
 import { useRouter } from 'expo-router'
-import { memo, useEffect, useMemo, useState } from 'react'
-import { Appearance, StyleSheet, TouchableOpacity, View } from 'react-native'
+import { memo, useMemo, useState } from 'react'
+import { StyleSheet, TouchableOpacity, View } from 'react-native'
 import SquircleView from 'react-native-fast-squircle'
 import { Text, useTheme } from 'react-native-paper'
 
 import IconButton from '@/components/common/IconButton'
+import SkinThumbUpBurst from '@/components/theme/SkinThumbUpBurst'
 import { useLikeComment } from '@/hooks/mutations/bilibili/comments'
+import useResolvedColorScheme from '@/hooks/theme/useResolvedColorScheme'
+import type { AppSkin } from '@/lib/theme/types'
 import type {
 	BilibiliCommentEmote,
 	BilibiliCommentItem,
@@ -19,6 +22,7 @@ interface CommentItemProps {
 	item: BilibiliCommentItem
 	onReplyPress?: (item: BilibiliCommentItem) => void
 	bvid: string
+	skin: AppSkin | null
 }
 
 type MessageSegment =
@@ -127,21 +131,18 @@ const CommentMessage = memo(function CommentMessage({
 	)
 })
 
-export function CommentItem({ item, onReplyPress, bvid }: CommentItemProps) {
+export function CommentItem({
+	item,
+	onReplyPress,
+	bvid,
+	skin,
+}: CommentItemProps) {
 	const theme = useTheme()
 	const [liked, setLiked] = useState(item.action === 1)
 	const [likeCount, setLikeCount] = useState(item.like || 0)
+	const [thumbUpBurstSignal, setThumbUpBurstSignal] = useState(0)
 	const router = useRouter()
-	const [darkMode, setDarkMode] = useState(
-		Appearance.getColorScheme() === 'dark',
-	)
-
-	useEffect(() => {
-		const subscription = Appearance.addChangeListener(({ colorScheme }) => {
-			setDarkMode(colorScheme === 'dark')
-		})
-		return () => subscription.remove()
-	}, [])
+	const darkMode = useResolvedColorScheme() === 'dark'
 
 	const { mutateAsync: likeComment } = useLikeComment()
 
@@ -155,6 +156,9 @@ export function CommentItem({ item, onReplyPress, bvid }: CommentItemProps) {
 				rpid: item.rpid,
 				newAction: newAction,
 			})
+			if (newAction === 1) {
+				setThumbUpBurstSignal((signal) => signal + 1)
+			}
 		} catch (e) {
 			toastAndLogError('点赞失败', e, 'Comments.CommentItem')
 			setLiked(liked)
@@ -234,6 +238,12 @@ export function CommentItem({ item, onReplyPress, bvid }: CommentItemProps) {
 							style={styles.actionButton}
 							onPress={handleLike}
 						>
+							<SkinThumbUpBurst
+								playSignal={thumbUpBurstSignal}
+								size={72}
+								skin={skin}
+								style={styles.likeBurst}
+							/>
 							<IconButton
 								icon={liked ? 'thumb-up' : 'thumb-up-outline'}
 								size={16}
@@ -380,6 +390,11 @@ const styles = StyleSheet.create({
 	actionButton: {
 		flexDirection: 'row',
 		alignItems: 'center',
+		position: 'relative',
+	},
+	likeBurst: {
+		bottom: 18,
+		left: -26,
 	},
 	actionIcon: {
 		margin: 0,

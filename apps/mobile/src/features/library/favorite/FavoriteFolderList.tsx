@@ -1,10 +1,13 @@
 import { LegendList } from '@legendapp/list/react-native'
 import { useRouter } from 'expo-router'
 import { memo, useCallback, useState } from 'react'
-import { RefreshControl, StyleSheet, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
 import { Text, useTheme } from 'react-native-paper'
 import { Searchbar as SearchBar } from 'react-native-paper'
 
+import ThemedRefreshControl, {
+	ThemedRefreshIndicator,
+} from '@/components/theme/ThemedRefreshControl'
 import { DataFetchingError } from '@/features/library/shared/DataFetchingError'
 import TabDisable from '@/features/library/shared/TabDisabled'
 import { FavoriteFolderListSkeleton } from '@/features/library/skeletons/LibraryTabSkeleton'
@@ -104,7 +107,7 @@ const FavoriteFolderListComponent = memo(() => {
 				renderItem={renderPlaylistItem}
 				recycleItems
 				refreshControl={
-					<RefreshControl
+					<ThemedRefreshControl
 						refreshing={refreshing || playlistsIsRefetching}
 						onRefresh={onRefresh}
 						colors={[colors.primary]}
@@ -112,6 +115,11 @@ const FavoriteFolderListComponent = memo(() => {
 					/>
 				}
 				keyExtractor={keyExtractor}
+				ListHeaderComponent={
+					<ThemedRefreshIndicator
+						refreshing={refreshing || playlistsIsRefetching}
+					/>
+				}
 				ListFooterComponent={
 					<Text
 						variant='titleMedium'

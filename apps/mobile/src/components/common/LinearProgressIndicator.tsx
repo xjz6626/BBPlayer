@@ -5,6 +5,8 @@ import type { ColorValue, StyleProp, ViewStyle } from 'react-native'
 import { Platform, StyleSheet, View } from 'react-native'
 import { useTheme } from 'react-native-paper'
 
+import useResolvedColorScheme from '@/hooks/theme/useResolvedColorScheme'
+
 type LinearProgressIndicatorProps = {
 	progress?: number
 	indeterminate?: boolean
@@ -30,6 +32,7 @@ const LinearProgressIndicator = memo(function LinearProgressIndicator({
 	visible = true,
 }: LinearProgressIndicatorProps) {
 	const { colors } = useTheme()
+	const colorScheme = useResolvedColorScheme()
 
 	if (!visible) return null
 
@@ -63,7 +66,10 @@ const LinearProgressIndicator = memo(function LinearProgressIndicator({
 
 	return (
 		<View style={[styles.container, style]}>
-			<Host style={styles.host}>
+			<Host
+				colorScheme={colorScheme}
+				style={styles.host}
+			>
 				<LinearWavyProgressIndicator
 					color={resolvedColor}
 					modifiers={[fillMaxWidth(), height(4)]}

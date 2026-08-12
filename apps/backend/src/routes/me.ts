@@ -1,10 +1,11 @@
 import { and, desc, eq, isNull } from 'drizzle-orm'
 import { Hono } from 'hono'
 
-import { createDb } from '../db'
 import { playlistMembers, sharedPlaylists } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
-import type { JwtTokenPayload } from '../types'
+import { databaseMiddleware } from '../middleware/database'
+import type { DatabaseVariables } from '../middleware/database'
+import type { JwtTokenPayload, WorkerBindings } from '../types'
 
 /**
  * GET /api/me/playlists
@@ -12,13 +13,14 @@ import type { JwtTokenPayload } from '../types'
  * 用于换设备后的全量恢复入口。
  */
 const meRoute = new Hono<{
-	Bindings: Env
-	Variables: { jwtPayload: JwtTokenPayload }
+	Bindings: WorkerBindings
+	Variables: { jwtPayload: JwtTokenPayload } & DatabaseVariables
 }>()
 	.use('*', authMiddleware)
+	.use('*', databaseMiddleware)
 	.get('/playlists', async (c) => {
 		const { sub } = c.var.jwtPayload
-		const { db } = await createDb(c.env.DATABASE_URL)
+		const db = c.var.db
 
 		const rows = await db
 			.select({

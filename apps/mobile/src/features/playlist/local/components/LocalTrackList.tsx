@@ -24,6 +24,7 @@ import ActivityIndicator from '@/components/common/ActivityIndicator'
 import useCurrentTrack from '@/hooks/player/useCurrentTrack'
 import { useBatchDownloadStatus } from '@/hooks/queries/orpheus'
 import usePreventRemove from '@/hooks/router/usePreventRemove'
+import useResolvedColorScheme from '@/hooks/theme/useResolvedColorScheme'
 import type { Playlist, Track } from '@/types/core/media'
 import type {
 	ListRenderItemInfoWithExtraData,
@@ -186,6 +187,7 @@ const HighFreqButton = ({
 	onDismiss: () => void
 }) => {
 	const theme = useTheme()
+	const colorScheme = useResolvedColorScheme()
 
 	return (
 		<Surface
@@ -213,7 +215,10 @@ const HighFreqButton = ({
 						height: 80,
 					}}
 				>
-					<Host matchContents>
+					<Host
+						colorScheme={colorScheme}
+						matchContents
+					>
 						<ExpoIcon
 							name={item.leadingIcon}
 							size={28}
@@ -257,6 +262,7 @@ export function LocalTrackList({
 	const haveTrack = useCurrentTrack()
 	const insets = useSafeAreaInsets()
 	const theme = useTheme()
+	const colorScheme = useResolvedColorScheme()
 	const isReadOnly =
 		playlist.shareRole === 'subscriber' || playlist.type === 'dynamic'
 	const ids = tracks.map((t) => t.uniqueKey)
@@ -451,7 +457,10 @@ export function LocalTrackList({
 												]}
 												pointerEvents='none'
 											>
-												<Host matchContents>
+												<Host
+													colorScheme={colorScheme}
+													matchContents
+												>
 													<ExpoIcon
 														name={menuItem.leadingIcon}
 														size={24}

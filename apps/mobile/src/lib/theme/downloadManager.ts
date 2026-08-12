@@ -123,6 +123,23 @@ const collectRemoteUrls = (manifest: SkinAssetDeclaration): string[] => {
 	return [...new Set(urls.filter(isRemoteUrl))]
 }
 
+/**
+ * Rebuild the deterministic relative path used for a downloaded manifest URL.
+ * This also lets runtime migrate skin.json files created before newer assets
+ * were exposed by AppSkin, without downloading the theme again.
+ */
+export const getDownloadedManifestAssetPath = (
+	manifest: SkinAssetDeclaration,
+	url: string | null | undefined,
+): string | null => {
+	if (!url) return null
+	if (!isRemoteUrl(url)) return url
+
+	const index = collectRemoteUrls(manifest).indexOf(url)
+	if (index < 0) return url
+	return `asset-${String(index).padStart(4, '0')}${extensionFromUrl(url)}`
+}
+
 // ============================================================
 // 公开 API
 // ============================================================
@@ -150,72 +167,100 @@ export const downloadManifestAssets = ({
 	onProgress?: (progress: SkinDownloadProgress) => void
 	signal?: AbortSignal
 }): ResultAsync<DownloadManifestResult, ServiceError> => {
-	const urls = collectRemoteUrls(manifest)
+	return ResultAsync.fromPromise(
+		(async () => {
+			const urls = collectRemoteUrls(manifest)
+			const plan = urls.map((url, index) => ({
+				localPath: `asset-${String(index).padStart(4, '0')}${extensionFromUrl(url)}`,
+				url,
+			}))
+			const mapping: Record<string, string> = {}
+			for (const item of plan) {
+				mapping[item.url] = item.localPath
+			}
 
-	log.debug('[download] collected remote URLs', {
-		count: urls.length,
-		remoteCount: urls.filter((u) => /^https?:\/\//.test(u)).length,
-	})
+			log.debug('[download] collected remote URLs', {
+				count: urls.length,
+				remoteCount: urls.filter((u) => /^https?:\/\//.test(u)).length,
+			})
 
-	const plan = urls.map((url, index) => ({
-		localPath: `asset-${String(index).padStart(4, '0')}${extensionFromUrl(url)}`,
-		url,
-	}))
+			if (!outputDirectory.exists) {
+				outputDirectory.create({ idempotent: true, intermediates: true })
+			}
 
-	const mapping: Record<string, string> = {}
-	for (const item of plan) {
-		mapping[item.url] = item.localPath
-	}
+			const total = plan.length
+			let completed = 0
+			let nextIndex = 0
+			const concurrency = Math.min(4, Math.max(1, total))
+			const downloadController = new AbortController()
+			const failures: unknown[] = []
+			const abortFromCaller = () => {
+				downloadController.abort(signal?.reason)
+			}
 
-	if (!outputDirectory.exists) {
-		outputDirectory.create({ idempotent: true, intermediates: true })
-	}
+			if (signal?.aborted) {
+				abortFromCaller()
+			} else {
+				signal?.addEventListener('abort', abortFromCaller, { once: true })
+			}
 
-	const total = plan.length
-	let completed = 0
+			const downloadNext = async () => {
+				while (nextIndex < plan.length && !downloadController.signal.aborted) {
+					const item = plan[nextIndex]
+					nextIndex += 1
 
-	return ResultAsync.combine(
-		plan.map((item) =>
-			ResultAsync.fromPromise(
-				(async () => {
-					const label = item.url.split('/').pop() ?? 'asset'
-					const file = new FileSystem.File(outputDirectory, item.localPath)
+					try {
+						const label = item.url.split('/').pop() ?? 'asset'
+						const file = new FileSystem.File(outputDirectory, item.localPath)
 
-					onProgress?.({
-						completed,
-						label: `下载 ${label}`,
-						progress: total > 0 ? completed / total : 0,
-						total,
-					})
+						onProgress?.({
+							completed,
+							label: `下载 ${label}`,
+							progress: total > 0 ? completed / total : 0,
+							total: Math.max(1, total),
+						})
 
-					if (file.exists) {
-						file.delete()
+						if (file.exists) {
+							file.delete()
+						}
+
+						await FileSystem.File.downloadFileAsync(item.url, file, {
+							headers: DOWNLOAD_HEADERS,
+							idempotent: true,
+							signal: downloadController.signal,
+						})
+
+						completed += 1
+
+						onProgress?.({
+							completed,
+							label: `已下载 ${label}`,
+							progress: total > 0 ? completed / total : 0,
+							total: Math.max(1, total),
+						})
+					} catch (error) {
+						if (failures.length === 0) failures.push(error)
+						downloadController.abort()
 					}
+				}
+			}
 
-					await FileSystem.File.downloadFileAsync(item.url, file, {
-						headers: DOWNLOAD_HEADERS,
-						idempotent: true,
-						signal,
-					})
+			try {
+				// Every worker must settle before the caller is allowed to delete temp files.
+				await Promise.all(Array.from({ length: concurrency }, downloadNext))
+				if (failures.length > 0) throw failures[0]
+				if (downloadController.signal.aborted) throw new Error('下载已取消')
 
-					completed += 1
-
-					onProgress?.({
-						completed,
-						label: `已下载 ${label}`,
-						progress: total > 0 ? completed / total : 0,
-						total: Math.max(1, total),
-					})
-				})(),
-				(e) =>
-					createSkinDownloadFailed(
-						e instanceof Error ? e.message : String(e),
-						e,
-					),
-			),
-		),
-	).map(() => {
-		log.debug('[download] all assets downloaded', { count: completed, total })
-		return { mapping }
-	})
+				log.debug('[download] all assets downloaded', {
+					count: completed,
+					total,
+				})
+				return { mapping }
+			} finally {
+				signal?.removeEventListener('abort', abortFromCaller)
+			}
+		})(),
+		(e) =>
+			createSkinDownloadFailed(e instanceof Error ? e.message : String(e), e),
+	)
 }

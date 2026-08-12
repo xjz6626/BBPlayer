@@ -2,7 +2,7 @@ import { LegendList } from '@legendapp/list/react-native'
 import { Image } from 'expo-image'
 import { useRouter } from 'expo-router'
 import { useMemo, useState } from 'react'
-import { Pressable, RefreshControl, StyleSheet, View } from 'react-native'
+import { Pressable, StyleSheet, View } from 'react-native'
 import { Appbar, Text, TextInput, useTheme } from 'react-native-paper'
 import { MD3Colors } from 'react-native-paper/src/types'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -10,6 +10,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import ActivityIndicator from '@/components/common/ActivityIndicator'
 import Button from '@/components/common/Button'
 import { alert } from '@/components/modals/AlertModal'
+import ThemedRefreshControl, {
+	ThemedRefreshIndicator,
+} from '@/components/theme/ThemedRefreshControl'
 import { useThemeSearch } from '@/hooks/queries/bilibili/theme'
 import { useModalStore } from '@/hooks/stores/useModalStore'
 import type { GarbSkinSearchResult } from '@/lib/api/bilibili/garb'
@@ -37,21 +40,34 @@ const mapSearchItem = (item: BilibiliGarbSearchItem): GarbSkinSearchResult => {
 }
 
 const confirmDownload = (item: GarbSkinSearchResult) => {
+	const unsupportedReason =
+		item.kind === null
+			? '当前只支持下载收藏集和主题装扮。'
+			: item.kind === 'collection' && (!item.actId || !item.lotteryId)
+				? '这个收藏集缺少下载所需的活动信息。'
+				: item.kind === 'suit' && !item.itemId
+					? '这个主题装扮缺少下载所需的商品信息。'
+					: null
+
+	if (unsupportedReason) {
+		alert('暂时无法下载', unsupportedReason, [{ text: '知道了' }])
+		return
+	}
+
 	const label = item.kind === 'collection' ? '收藏集' : '主题装扮'
-	const openModal = useModalStore.getState().open
+	const replaceModal = useModalStore.getState().replace
 	alert('下载主题资源包', `是否下载「${item.name}」${label}资产？`, [
 		{ text: '取消' },
 		{
 			text: '下载',
+			closeOnPress: false,
 			onPress: () => {
-				if (!item.kind) {
-					alert('暂时无法下载', '当前只支持下载收藏集和主题装扮。', [
-						{ text: '知道了' },
-					])
-					return
-				}
-
-				openModal('SkinDownloadProgress', { item }, { dismissible: false })
+				replaceModal(
+					'Alert',
+					'SkinDownloadProgress',
+					{ item },
+					{ dismissible: false },
+				)
 			},
 		},
 	])
@@ -159,7 +175,7 @@ export default function ThemeSkinSearchPage() {
 						if (hasNextPage) void fetchNextPage()
 					}}
 					refreshControl={
-						<RefreshControl
+						<ThemedRefreshControl
 							refreshing={refreshing}
 							onRefresh={async () => {
 								setRefreshing(true)
@@ -172,6 +188,9 @@ export default function ThemeSkinSearchPage() {
 					}
 					extraData={extraData}
 					renderItem={renderItem}
+					ListHeaderComponent={
+						<ThemedRefreshIndicator refreshing={refreshing} />
+					}
 					ListEmptyComponent={
 						isFetching ? (
 							<View style={styles.emptyLoadingContainer}>

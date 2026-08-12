@@ -201,7 +201,7 @@ function PlayerQueueModal({ sheetRef, ...props }: PlayerQueueModalProps) {
 							onPress={() => {
 								if (queue.length > 0) {
 									useModalStore.getState().open('SaveQueueToPlaylist', {
-										trackIds: queue.map((t) => t.id),
+										tracks: queue,
 									})
 								}
 							}}

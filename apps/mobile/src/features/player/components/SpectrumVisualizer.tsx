@@ -1,6 +1,7 @@
 import { Orpheus, SPECTRUM_SIZE } from '@bbplayer/orpheus'
 import { Canvas, Path, Skia } from '@shopify/react-native-skia'
-import { useEffect, useRef, useState } from 'react'
+import { useFocusEffect } from 'expo-router'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AppState, PermissionsAndroid, Platform, View } from 'react-native'
 import { useDerivedValue, useSharedValue } from 'react-native-reanimated'
 
@@ -33,8 +34,16 @@ export const SpectrumVisualizer = ({
 		AppState.currentState === 'active',
 	)
 	const [hasPermission, setHasPermission] = useState<boolean | null>(null)
+	const [isFocused, setIsFocused] = useState(false)
 
 	const setSettings = useAppStore((state) => state.setSettings)
+
+	useFocusEffect(
+		useCallback(() => {
+			setIsFocused(true)
+			return () => setIsFocused(false)
+		}, []),
+	)
 
 	useEffect(() => {
 		const checkPermission = async () => {
@@ -132,6 +141,18 @@ export const SpectrumVisualizer = ({
 	}, [geometry])
 
 	useEffect(() => {
+		if (Platform.OS !== 'android') return
+
+		const active =
+			hasPermission === true && isPlaying && isAppActive && isFocused
+		Orpheus.setSpectrumCaptureEnabled(active)
+
+		return () => {
+			Orpheus.setSpectrumCaptureEnabled(false)
+		}
+	}, [hasPermission, isPlaying, isAppActive, isFocused])
+
+	useEffect(() => {
 		if (!hasPermission) return
 
 		let animationFrameId: number
@@ -141,7 +162,7 @@ export const SpectrumVisualizer = ({
 		const DECAY_FACTOR = 0.9
 
 		const animate = (timestamp: number) => {
-			if (!isAppActive) return
+			if (!isAppActive || !isFocused) return
 
 			const elapsed = timestamp - lastFrameTime
 
@@ -226,7 +247,7 @@ export const SpectrumVisualizer = ({
 			animationFrameId = requestAnimationFrame(animate)
 		}
 
-		if (isAppActive) {
+		if (isAppActive && isFocused) {
 			animationFrameId = requestAnimationFrame(animate)
 		}
 
@@ -235,7 +256,7 @@ export const SpectrumVisualizer = ({
 				cancelAnimationFrame(animationFrameId)
 			}
 		}
-	}, [frequencyData, isPlaying, isAppActive, hasPermission])
+	}, [frequencyData, isPlaying, isAppActive, isFocused, hasPermission])
 
 	if (hasPermission !== true) {
 		return null

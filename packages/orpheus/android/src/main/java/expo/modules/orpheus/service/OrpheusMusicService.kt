@@ -13,6 +13,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -32,6 +33,7 @@ import expo.modules.orpheus.manager.LyriconBackend
 import expo.modules.orpheus.manager.MeizuStatusBarLyricsBackend
 import expo.modules.orpheus.manager.StatusBarLyricsManager
 import expo.modules.orpheus.manager.SuperLyricBackend
+import expo.modules.orpheus.manager.TrackAudioEffectManager
 import expo.modules.orpheus.manager.UnifiedLyricsManager
 import expo.modules.orpheus.model.LyricsData
 import expo.modules.orpheus.model.LyricsLine
@@ -42,6 +44,7 @@ import expo.modules.orpheus.util.GeneralStorage
 import expo.modules.orpheus.util.GlideBitmapLoader
 import expo.modules.orpheus.util.LoudnessStorage
 import expo.modules.orpheus.util.SleepTimeController
+import expo.modules.orpheus.util.TrackAudioEffectStorage
 import expo.modules.orpheus.util.calculateLoudnessGain
 import expo.modules.orpheus.util.fadeInTo
 import kotlinx.coroutines.Job
@@ -58,13 +61,16 @@ class OrpheusMusicService : MediaLibraryService() {
     private var mediaSession: MediaLibrarySession? = null
     private var sleepTimerManager: SleepTimeController? = null
     private var volumeFadeJob: Job? = null
+    private var currentLoudnessGain = 1.0f
     private var scope = MainScope()
+    private val trackAudioEffectManager = TrackAudioEffectManager()
 
     lateinit var floatingLyricsManager: FloatingLyricsManager
     lateinit var statusBarLyricsManager: StatusBarLyricsManager
     private val serviceHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     private var lastTrackFinishedAt: Long = 0
+    private var lastFinishedMediaId: String? = null
     private val durationCache = mutableMapOf<String, Long>()
     lateinit var shuffleManager: ShuffleManager
     lateinit var lyricsManager: UnifiedLyricsManager
@@ -128,6 +134,7 @@ class OrpheusMusicService : MediaLibraryService() {
 
         GeneralStorage.initialize(this)
         LoudnessStorage.initialize(this)
+        TrackAudioEffectStorage.initialize(this)
 
         setMediaNotificationProvider(object : DefaultMediaNotificationProvider(this) {
             override fun getMediaButtons(
@@ -222,8 +229,18 @@ class OrpheusMusicService : MediaLibraryService() {
         val renderersFactory = DefaultRenderersFactory(this)
             .experimentalSetMediaCodecAsyncCryptoFlagEnabled(false)
 
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
+                DefaultLoadControl.DEFAULT_MAX_BUFFER_MS,
+                1_000,
+                2_000
+            )
+            .build()
+
         player = ExoPlayer.Builder(this, renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
+            .setLoadControl(loadControl)
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
@@ -311,6 +328,8 @@ class OrpheusMusicService : MediaLibraryService() {
         serviceHandler.removeCallbacks(lyricsUpdateRunnable)
         floatingLyricsManager.hide()
         statusBarLyricsManager.onStop()
+        volumeFadeJob?.cancel()
+        trackAudioEffectManager.release()
         scope.cancel()
         instance = null
 
@@ -403,16 +422,37 @@ class OrpheusMusicService : MediaLibraryService() {
         val restoredItems = GeneralStorage.restoreQueue(this)
 
         if (restoredItems.isNotEmpty()) {
-            player.setMediaItems(restoredItems)
-
             val savedIndex = GeneralStorage.getSavedIndex()
             val savedPosition = GeneralStorage.getSavedPosition()
             val savedShuffleMode = GeneralStorage.getShuffleMode()
             val savedRepeatMode = GeneralStorage.getRepeatMode()
+            val savedMediaId = restoredItems.getOrNull(savedIndex)?.mediaId
+            val uniqueRestoredItems = restoredItems.distinctBy { item -> item.mediaId }
+            val queueWasDeduplicated = uniqueRestoredItems.size != restoredItems.size
 
-            if (savedIndex >= 0 && savedIndex < restoredItems.size) {
-                player.seekTo(savedIndex, if (restorePosition) savedPosition else C.TIME_UNSET)
+            if (queueWasDeduplicated) {
+                Log.i(
+                    "OrpheusMusicService",
+                    "Removed ${restoredItems.size - uniqueRestoredItems.size} duplicate queue items during restore"
+                )
+                GeneralStorage.saveQueue(uniqueRestoredItems)
+            }
+
+            player.setMediaItems(uniqueRestoredItems)
+
+            val restoredIndex = savedMediaId
+                ?.let { mediaId -> uniqueRestoredItems.indexOfFirst { item -> item.mediaId == mediaId } }
+                ?: C.INDEX_UNSET
+
+            if (restoredIndex != C.INDEX_UNSET) {
+                if (queueWasDeduplicated) {
+                    GeneralStorage.savePosition(restoredIndex, savedPosition)
+                }
+                player.seekTo(restoredIndex, if (restorePosition) savedPosition else C.TIME_UNSET)
             } else {
+                if (queueWasDeduplicated) {
+                    GeneralStorage.savePosition(0, 0L)
+                }
                 player.seekTo(0, 0L)
             }
 
@@ -497,6 +537,42 @@ class OrpheusMusicService : MediaLibraryService() {
         }
     }
 
+    private fun resolveDurationMs(mediaItem: MediaItem, runtimeDurationMs: Long = C.TIME_UNSET): Long? {
+        if (runtimeDurationMs != C.TIME_UNSET && runtimeDurationMs > 0) {
+            durationCache[mediaItem.mediaId] = runtimeDurationMs
+            return runtimeDurationMs
+        }
+
+        durationCache[mediaItem.mediaId]?.let { return it }
+        return extractTrackRecord(mediaItem)?.duration
+            ?.takeIf { it > 0 }
+            ?.times(1000)
+            ?.toLong()
+    }
+
+    private fun finishTrack(
+        mediaItem: MediaItem,
+        finalPositionMs: Long,
+        runtimeDurationMs: Long = C.TIME_UNSET
+    ) {
+        val durationMs = resolveDurationMs(mediaItem, runtimeDurationMs) ?: return
+        val currentTime = System.currentTimeMillis()
+        if (
+            mediaItem.mediaId == lastFinishedMediaId &&
+            currentTime - lastTrackFinishedAt < 500
+        ) {
+            return
+        }
+
+        lastFinishedMediaId = mediaItem.mediaId
+        lastTrackFinishedAt = currentTime
+        sendTrackFinishedEvent(
+            mediaItem.mediaId,
+            finalPositionMs.coerceAtLeast(0) / 1000.0,
+            durationMs / 1000.0
+        )
+    }
+
     private fun sendTrackPausedEvent() {
         try {
             val intent = Intent(this, OrpheusHeadlessTaskService::class.java)
@@ -543,6 +619,20 @@ class OrpheusMusicService : MediaLibraryService() {
                 }
             }
 
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                val currentPlayer = player ?: return
+                val currentItem = currentPlayer.currentMediaItem ?: return
+                if (playbackState == Player.STATE_READY) {
+                    resolveDurationMs(currentItem, currentPlayer.duration)
+                } else if (playbackState == Player.STATE_ENDED) {
+                    finishTrack(
+                        currentItem,
+                        currentPlayer.currentPosition,
+                        currentPlayer.duration
+                    )
+                }
+            }
+
             @OptIn(UnstableApi::class)
             override fun onMediaItemTransition(
                 mediaItem: androidx.media3.common.MediaItem?,
@@ -564,6 +654,7 @@ class OrpheusMusicService : MediaLibraryService() {
                 if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT && mediaId == currentMediaId) {
                     Log.d("OrpheusMusicService", "Ignoring onMediaItemTransition as track hasn't changed.")
                     saveCurrentQueue()
+                    prefetchNextTrack()
                     return
                 }
                 currentMediaId = mediaId
@@ -575,15 +666,23 @@ class OrpheusMusicService : MediaLibraryService() {
                 floatingLyricsManager.syncTrackInfo()
 
                 saveCurrentQueue()
-                val uri = mediaItem?.localConfiguration?.uri?.toString() ?: return
-
-                val volumeData = LoudnessStorage.getLoudnessData(uri)
+                prefetchNextTrack()
+                val uri = mediaItem?.localConfiguration?.uri?.toString()
+                val volumeData = uri?.let(LoudnessStorage::getLoudnessData) ?: 0.0
                 applyVolumeForCurrentItem(volumeData)
+            }
+
+            @OptIn(UnstableApi::class)
+            override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                if (audioSessionId != C.AUDIO_SESSION_ID_UNSET) {
+                    applyCurrentTrackAudioEffects(animateVolume = false)
+                }
             }
 
             override fun onTimelineChanged(timeline: Timeline, reason: Int) {
                 saveCurrentQueue()
                 val player = player ?: return
+                prefetchNextTrack()
                 val currentItem = player.currentMediaItem ?: return
                 val duration = player.duration
                 if (duration != C.TIME_UNSET && duration > 0) {
@@ -600,22 +699,9 @@ class OrpheusMusicService : MediaLibraryService() {
                 val isAutoTransition = reason == Player.DISCONTINUITY_REASON_AUTO_TRANSITION
                 val isIndexChanged = oldPosition.mediaItemIndex != newPosition.mediaItemIndex
                 val lastMediaItem = oldPosition.mediaItem ?: return
-                val currentTime = System.currentTimeMillis()
-
-                // Debounce
-                if ((currentTime - lastTrackFinishedAt) < 200) {
-                    return
-                }
 
                 if (isAutoTransition || isIndexChanged) {
-                    val duration = durationCache[lastMediaItem.mediaId] ?: return
-                    lastTrackFinishedAt = currentTime
-
-                    sendTrackFinishedEvent(
-                        lastMediaItem.mediaId,
-                        oldPosition.positionMs / 1000.0,
-                        duration / 1000.0
-                    )
+                    finishTrack(lastMediaItem, oldPosition.positionMs)
                 }
             }
         })
@@ -627,6 +713,15 @@ class OrpheusMusicService : MediaLibraryService() {
         if (queue.isNotEmpty()) {
             GeneralStorage.saveQueue(queue)
         }
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun prefetchNextTrack() {
+        val currentPlayer = player ?: return
+        val nextIndex = currentPlayer.nextMediaItemIndex
+        if (nextIndex == C.INDEX_UNSET) return
+        val nextUri = currentPlayer.getMediaItemAt(nextIndex).localConfiguration?.uri
+        DownloadUtil.prefetchBilibiliUri(nextUri)
     }
 
     fun createStatusBarBackend(provider: String): expo.modules.orpheus.manager.StatusBarLyricsBackend {
@@ -709,22 +804,44 @@ class OrpheusMusicService : MediaLibraryService() {
     @OptIn(UnstableApi::class)
     private fun applyVolumeForCurrentItem(measuredI: Double) {
         Log.d("LoudnessNormalization", "measuredI: $measuredI")
-        val player = player ?: return
-        volumeFadeJob?.cancel()
         val isLoudnessNormalizationEnabled = GeneralStorage.isLoudnessNormalizationEnabled()
-        if (!isLoudnessNormalizationEnabled) return
-        val gain = run {
+        currentLoudnessGain = if (isLoudnessNormalizationEnabled) {
             val target = -14.0 // bilibili 的这个值似乎是固定的
             if (measuredI == 0.0) 1.0f else calculateLoudnessGain(measuredI, target)
+        } else {
+            1.0f
         }
+        applyCurrentTrackAudioEffects(animateVolume = true)
+    }
 
-        val targetVol = 1.0f * gain
+    private fun applyCurrentTrackAudioEffects(animateVolume: Boolean) {
+        val player = player ?: return
+        val trackId = player.currentMediaItem?.mediaId ?: return
+        val profile = TrackAudioEffectStorage.getProfile(trackId)
+        val targetVolume = trackAudioEffectManager.apply(player, profile, currentLoudnessGain)
         val currentVolume = player.volume
 
-        if (abs(currentVolume - targetVol) < 0.001f) {
-            return
-        }
+        volumeFadeJob?.cancel()
+        if (abs(currentVolume - targetVolume) < 0.001f) return
 
-        volumeFadeJob = player.fadeInTo(targetVol, 600L, scope)
+        if (animateVolume) {
+            volumeFadeJob = player.fadeInTo(targetVolume, 600L, scope)
+        } else {
+            player.volume = targetVolume
+        }
+    }
+
+    fun setTrackAudioEffectProfile(trackId: String, volumeDb: Double, vocalStrength: Double) {
+        TrackAudioEffectStorage.setProfile(trackId, volumeDb, vocalStrength)
+        if (player?.currentMediaItem?.mediaId == trackId) {
+            applyCurrentTrackAudioEffects(animateVolume = false)
+        }
+    }
+
+    fun resetTrackAudioEffectProfile(trackId: String) {
+        TrackAudioEffectStorage.resetProfile(trackId)
+        if (player?.currentMediaItem?.mediaId == trackId) {
+            applyCurrentTrackAudioEffects(animateVolume = false)
+        }
     }
 }

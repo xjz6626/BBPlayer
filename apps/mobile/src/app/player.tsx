@@ -10,13 +10,7 @@ import { useImage } from 'expo-image'
 import { useObserve } from 'expo-observe'
 import { router } from 'expo-router'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import {
-	AppState,
-	StyleSheet,
-	useColorScheme,
-	useWindowDimensions,
-	View,
-} from 'react-native'
+import { AppState, StyleSheet, useWindowDimensions, View } from 'react-native'
 import PagerView from 'react-native-pager-view'
 import { useTheme } from 'react-native-paper'
 import {
@@ -38,6 +32,7 @@ import useCurrentTrack from '@/hooks/player/useCurrentTrack'
 import usePreventRemove from '@/hooks/router/usePreventRemove'
 import useAppStore from '@/hooks/stores/useAppStore'
 import { usePlayerQueueSheetStore } from '@/hooks/stores/usePlayerQueueSheetStore'
+import useResolvedColorScheme from '@/hooks/theme/useResolvedColorScheme'
 import { resolveBilibiliImageUrl, resolveTrackCover } from '@/utils/imageUrl'
 import log, { reportErrorToSentry } from '@/utils/log'
 import toast from '@/utils/toast'
@@ -93,7 +88,7 @@ export default function PlayerPage() {
 		onError: () => void 0,
 	})
 	const { width, height } = useWindowDimensions()
-	const colorScheme = useColorScheme()
+	const colorScheme = useResolvedColorScheme()
 	const playerBackgroundStyle = useAppStore(
 		(state) => state.settings.playerBackgroundStyle,
 	)

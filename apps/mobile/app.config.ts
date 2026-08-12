@@ -20,33 +20,53 @@ import { version } from './package.json'
 const IS_DEV = process.env.APP_VARIANT === 'development'
 const IS_PREVIEW = process.env.APP_VARIANT === 'preview'
 
-// 使用 git commit 数量作为 versionCode
+const VERSION_CODE_EPOCH_MS = Date.UTC(2026, 0, 1)
+const MAX_ANDROID_VERSION_CODE = 2_100_000_000
+
+const parseVersionCode = (value: string | number): number | undefined => {
+	const versionCode =
+		typeof value === 'number' ? value : Number.parseInt(value, 10)
+	return Number.isInteger(versionCode) &&
+		versionCode > 0 &&
+		versionCode <= MAX_ANDROID_VERSION_CODE
+		? versionCode
+		: undefined
+}
+
+// versionCode comes from a UTC timestamp and remains independent of Git history.
 const getVersionCode = (): number => {
 	const versionCodeEnv =
-		// env 获取到的不可能是 string，我们这么做只是为了让 eslint 开心
+		// Expo config may expose environment-backed values with a wider type.
 		(process.env.VERSION_CODE as string | undefined | number) ?? undefined
 	const pwd = process.cwd()
 	// EAS 环境的行为很奇怪，似乎不会复制 .git 目录，所以需要特殊强制外部提供 versionCode
 	const isInEAS = pwd.includes('eas-build-local-nodejs')
-	if (typeof versionCodeEnv === 'string') {
-		const versionCode = parseInt(versionCodeEnv, 10)
-		if (!isNaN(versionCode) && versionCode > 0) {
-			return versionCode
-		}
+	if (versionCodeEnv !== undefined) {
+		const versionCode = parseVersionCode(versionCodeEnv)
+		if (versionCode !== undefined) return versionCode
 	} else if (!isInEAS) {
-		const versionCodeString = execSync('git rev-list --count HEAD')
-			.toString()
-			.trim()
-		const versionCode = parseInt(versionCodeString, 10)
-		if (!isNaN(versionCode) && versionCode > 0) {
-			return versionCode
-		}
+		const versionCode = parseVersionCode(
+			Math.floor((Date.now() - VERSION_CODE_EPOCH_MS) / 1000),
+		)
+		if (versionCode !== undefined) return versionCode
 	}
 
 	throw new Error('VERSION_CODE environment variable is required or not in EAS')
 }
 
 const versionCode = getVersionCode()
+
+const getBuildCommit = (): string | undefined => {
+	const commitFromEnv = process.env.COMMIT_SHA
+	if (commitFromEnv?.trim()) return commitFromEnv.trim()
+	try {
+		return execSync('git rev-parse HEAD').toString().trim()
+	} catch {
+		return undefined
+	}
+}
+
+const buildCommit = getBuildCommit()
 
 const getUniqueIdentifier = () => {
 	if (IS_DEV) {
@@ -275,14 +295,17 @@ export default ({ config }: ConfigContext): ExpoConfig => {
 			typedRoutes: true,
 		},
 		extra: {
+			buildCommit,
 			eas: {
 				projectId: '1cbd8d50-e322-4ead-98b6-4ee8b6f2a707',
 			},
-			updateManifestUrl: 'https://be.bbplayer.roitium.com/update.json',
+			updateReleaseTag: 'nightly',
+			updateRepository: 'xjz6626/BBPlayer',
 		},
 		owner: 'roitium',
 		updates: {
 			url: 'https://u.expo.dev/1cbd8d50-e322-4ead-98b6-4ee8b6f2a707',
+			checkAutomatically: 'NEVER',
 			enableBsdiffPatchSupport: true,
 		},
 		ios: {

@@ -1,3 +1,5 @@
+import type { Track as OrpheusTrack } from '@bbplayer/orpheus'
+
 import type { AlertModalProps } from '@/components/modals/AlertModal'
 import type { GarbSkinSearchResult } from '@/lib/api/bilibili/garb'
 import type { MatchResult } from '@/lib/services/externalPlaylistService'
@@ -29,9 +31,10 @@ export interface ModalPropsMap {
 	Alert: AlertModalProps
 	EditLyrics: { uniqueKey: string; lyrics: LyricFileData }
 	SleepTimer: undefined
-	SaveQueueToPlaylist: { trackIds: string[] }
+	SaveQueueToPlaylist: { tracks: OrpheusTrack[] }
 	DonationQR: { type: 'wechat' | 'alipay' }
 	PlaybackSpeed: undefined
+	SingleTrackEffects: undefined
 	LyricsSelection: undefined
 	SongShare: undefined
 	SyncLocalToBilibili: { playlistId: number }

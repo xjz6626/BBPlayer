@@ -2,12 +2,15 @@ import { Icon } from '@expo/ui'
 import { useImage } from 'expo-image'
 import { useRouter } from 'expo-router'
 import { useCallback, useMemo, useState } from 'react'
-import { RefreshControl, StyleSheet, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
 import { Appbar, useTheme } from 'react-native-paper'
 
 import FunctionalMenu from '@/components/common/FunctionalMenu'
 import { alert } from '@/components/modals/AlertModal'
 import NowPlayingBar from '@/components/NowPlayingBar'
+import ThemedRefreshControl, {
+	ThemedRefreshListHeader,
+} from '@/components/theme/ThemedRefreshControl'
 import { PlaylistError } from '@/features/playlist/remote/components/PlaylistError'
 import { PlaylistHeader } from '@/features/playlist/remote/components/PlaylistHeader'
 import { TrackList } from '@/features/playlist/remote/components/RemoteTrackList'
@@ -138,10 +141,10 @@ export default function ToViewPage() {
 			return
 		}
 		void addToQueue({
-			tracks: [track],
+			tracks: [createIt.value],
 			playNow: true,
 			clearQueue: false,
-			startFromKey: track.uniqueKey,
+			startFromKey: createIt.value.uniqueKey,
 			playNext: false,
 		})
 	}, [])
@@ -152,8 +155,17 @@ export default function ToViewPage() {
 			return
 		}
 
+		const persistResult = await syncFacade.addTracksToLocal(tracksData)
+		if (persistResult.isErr()) {
+			toastAndLogError(
+				'播放全部失败，歌曲入库时发生错误',
+				persistResult.error,
+				'ToView.PlayAll',
+			)
+			return
+		}
 		await addToQueue({
-			tracks: tracksData,
+			tracks: persistResult.value,
 			playNow: true,
 			clearQueue: true,
 			playNext: false,
@@ -266,24 +278,26 @@ export default function ToViewPage() {
 					trackMenuItems={trackMenuItems}
 					selection={selection}
 					ListHeaderComponent={
-						<PlaylistHeader
-							cover={coverRef ?? undefined}
-							title={'稍后再看'}
-							subtitles={`有\u2009${tracksData.length}\u2009首待播放的歌曲`}
-							description={undefined}
-							onClickMainButton={handlePlayAll}
-							mainButtonIcon={'play'}
-							linkedPlaylistId={undefined}
-							mainButtonText='播放全部'
-							id={'稍后再看'}
-							primaryButtonColor={primaryButtonColor}
-							primaryButtonTextColor={primaryButtonTextColor}
-							secondaryButtonContainerColor={secondaryButtonContainerColor}
-							secondaryButtonIconColor={secondaryButtonIconColor}
-						/>
+						<ThemedRefreshListHeader refreshing={refreshing}>
+							<PlaylistHeader
+								cover={coverRef ?? undefined}
+								title={'稍后再看'}
+								subtitles={`有\u2009${tracksData.length}\u2009首待播放的歌曲`}
+								description={undefined}
+								onClickMainButton={handlePlayAll}
+								mainButtonIcon={'play'}
+								linkedPlaylistId={undefined}
+								mainButtonText='播放全部'
+								id={'稍后再看'}
+								primaryButtonColor={primaryButtonColor}
+								primaryButtonTextColor={primaryButtonTextColor}
+								secondaryButtonContainerColor={secondaryButtonContainerColor}
+								secondaryButtonIconColor={secondaryButtonIconColor}
+							/>
+						</ThemedRefreshListHeader>
 					}
 					refreshControl={
-						<RefreshControl
+						<ThemedRefreshControl
 							refreshing={refreshing}
 							onRefresh={async () => {
 								setRefreshing(true)

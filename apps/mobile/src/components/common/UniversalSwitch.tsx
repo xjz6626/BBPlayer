@@ -1,6 +1,8 @@
 import { Host, Switch } from '@expo/ui'
 import { memo } from 'react'
 
+import useResolvedColorScheme from '@/hooks/theme/useResolvedColorScheme'
+
 type UniversalSwitchProps = {
 	value: boolean
 	onValueChange: (value: boolean) => void
@@ -14,8 +16,13 @@ const UniversalSwitch = memo(function UniversalSwitch({
 	testID,
 	value,
 }: UniversalSwitchProps) {
+	const colorScheme = useResolvedColorScheme()
+
 	return (
-		<Host matchContents>
+		<Host
+			colorScheme={colorScheme}
+			matchContents
+		>
 			<Switch
 				disabled={disabled}
 				onValueChange={onValueChange}

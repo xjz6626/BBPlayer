@@ -1,6 +1,6 @@
 import { Icon as ExpoIcon } from '@expo/ui'
 import { memo } from 'react'
-import { StyleSheet, useColorScheme, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
 import { Touchable } from 'react-native-gesture-handler'
 import { Icon, Surface, Text, useTheme } from 'react-native-paper'
 
@@ -9,6 +9,7 @@ import FunctionalMenu from '@/components/common/FunctionalMenu'
 import UniversalCheckbox from '@/components/common/UniversalCheckbox'
 import { VariantPlainText } from '@/components/common/VariantPlainText'
 import useIsCurrentTrack from '@/hooks/player/useIsCurrentTrack'
+import useResolvedColorScheme from '@/hooks/theme/useResolvedColorScheme'
 import { analyticsService } from '@/lib/services/analyticsService'
 import {
 	LIST_ITEM_BORDER_RADIUS,
@@ -96,7 +97,7 @@ export const TrackListItem = memo(function TrackListItem({
 	enterSelectMode,
 }: TrackListItemProps) {
 	const { colors } = useTheme()
-	const dark = useColorScheme() === 'dark'
+	const dark = useResolvedColorScheme() === 'dark'
 	const isCurrentTrack = useIsCurrentTrack(data.uniqueKey)
 
 	// 在非选择模式下，当前播放歌曲高亮；在选择模式下，歌曲被选中时高亮

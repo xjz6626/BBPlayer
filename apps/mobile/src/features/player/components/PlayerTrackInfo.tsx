@@ -3,27 +3,32 @@ import type { ImageRef } from 'expo-image'
 import { Image } from 'expo-image'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useEffect, useState } from 'react'
-import type { ColorSchemeName } from 'react-native'
 import {
 	Dimensions,
 	Pressable,
 	StyleSheet,
 	TouchableOpacity,
-	useColorScheme,
 	View,
 } from 'react-native'
 import SquircleView from 'react-native-fast-squircle'
-import { Text, TouchableRipple, useTheme } from 'react-native-paper'
+import { Button, Text, TouchableRipple, useTheme } from 'react-native-paper'
 
 import IconButton from '@/components/common/IconButton'
-import { useThumbUpVideo } from '@/hooks/mutations/bilibili/video'
+import SkinThumbUpBurst from '@/components/theme/SkinThumbUpBurst'
+import { useToggleDefaultFavorite } from '@/hooks/mutations/bilibili/favorite'
+import { useModifyUserRelation } from '@/hooks/mutations/bilibili/user'
 import useCurrentTrack from '@/hooks/player/useCurrentTrack'
-import { useGetVideoIsThumbUp } from '@/hooks/queries/bilibili/video'
+import { useGetFavoriteForOneVideo } from '@/hooks/queries/bilibili/favorite'
+import {
+	usePersonalInformation,
+	useUserRelation,
+} from '@/hooks/queries/bilibili/user'
 import useAppStore from '@/hooks/stores/useAppStore'
 import useActiveSkin from '@/hooks/theme/useActiveSkin'
+import useResolvedColorScheme from '@/hooks/theme/useResolvedColorScheme'
 import { getGradientColors } from '@/utils/color'
+import toast from '@/utils/toast'
 
-import SkinThumbUpBurst from './SkinThumbUpBurst'
 import { SpectrumVisualizer } from './SpectrumVisualizer'
 
 const { width: screenWidth } = Dimensions.get('window')
@@ -41,27 +46,43 @@ export function TrackInfo({
 	coverRef: ImageRef | null
 }) {
 	const { colors } = useTheme()
-	const colorScheme: ColorSchemeName = useColorScheme()
+	const colorScheme = useResolvedColorScheme()
 	const isDark: boolean = colorScheme === 'dark'
 
 	const currentTrack = useCurrentTrack()
 	const isPlaying = useIsPlaying()
 	const [isTitleExpanded, setIsTitleExpanded] = useState(false)
-	const [thumbUpBurstSignal, setThumbUpBurstSignal] = useState(0)
+	const [favoriteBurstSignal, setFavoriteBurstSignal] = useState(0)
 	const activeSkin = useActiveSkin()
 
 	const enableSpectrumVisualizer = useAppStore(
 		(state) => state.settings.enableSpectrumVisualizer,
 	)
 
-	const { data: isThumbUp, isPending: isThumbUpPending } = useGetVideoIsThumbUp(
-		currentTrack?.source === 'bilibili'
-			? currentTrack?.bilibiliMetadata.bvid
-			: undefined,
-	)
-	const { mutate: doThumbUpAction } = useThumbUpVideo()
-
 	const isBilibiliVideo = currentTrack?.source === 'bilibili'
+	const bvid = isBilibiliVideo ? currentTrack.bilibiliMetadata.bvid : ''
+	const uploaderMid =
+		isBilibiliVideo && currentTrack.artist?.remoteId
+			? Number(currentTrack.artist.remoteId)
+			: undefined
+	const { data: personalInformation } = usePersonalInformation()
+	const { data: favoriteFolders, isFetching: isFavoriteStatusFetching } =
+		useGetFavoriteForOneVideo(bvid, personalInformation?.mid)
+	const defaultFavoriteFolder =
+		favoriteFolders?.find((folder) => ((folder.attr ?? 0) >> 1) % 2 === 0) ??
+		favoriteFolders?.[0]
+	const isInDefaultFavorite = defaultFavoriteFolder?.fav_state === 1
+	const {
+		mutate: toggleDefaultFavorite,
+		isPending: isFavoriteMutationPending,
+	} = useToggleDefaultFavorite()
+	const { data: relation, isPending: isRelationPending } =
+		useUserRelation(uploaderMid)
+	const { mutate: modifyRelation, isPending: isRelationMutationPending } =
+		useModifyUserRelation()
+	const isFollowed = relation?.attribute === 2 || relation?.attribute === 6
+	const canFollow =
+		!!uploaderMid && personalInformation?.mid !== uploaderMid && !!relation
 
 	const { color1, color2 } = getGradientColors(
 		currentTrack?.title ?? '',
@@ -81,15 +102,37 @@ export function TrackInfo({
 		? coverSize / 2
 		: COVER_SIZE_RECT * 0.22
 
-	const onThumbUpPress = () => {
-		if (isThumbUpPending || !isBilibiliVideo || !currentTrack) return
-		if (!isThumbUp) {
-			setThumbUpBurstSignal((signal) => signal + 1)
+	const onFavoritePress = () => {
+		if (!bvid || isFavoriteStatusFetching || isFavoriteMutationPending) {
+			return
 		}
-		doThumbUpAction({
-			bvid: currentTrack.bilibiliMetadata.bvid,
-			like: !isThumbUp,
-		})
+		if (!personalInformation?.mid) {
+			toast.error('请先登录 bilibili 账号')
+			return
+		}
+		if (!defaultFavoriteFolder) {
+			toast.error('还没有可用的收藏夹')
+			return
+		}
+		toggleDefaultFavorite(
+			{
+				bvid,
+				folderId: defaultFavoriteFolder.id,
+				favorite: !isInDefaultFavorite,
+			},
+			{
+				onSuccess: () => {
+					if (!isInDefaultFavorite) {
+						setFavoriteBurstSignal((signal) => signal + 1)
+					}
+				},
+			},
+		)
+	}
+
+	const onFollowPress = () => {
+		if (!uploaderMid || !canFollow || isRelationMutationPending) return
+		modifyRelation({ mid: uploaderMid, follow: !isFollowed })
 	}
 
 	useEffect(() => {
@@ -226,28 +269,48 @@ export function TrackInfo({
 							</Text>
 						</TouchableRipple>
 						{currentTrack.artist?.name && (
-							<TouchableRipple onPress={onArtistPress}>
-								<Text
-									variant='bodyMedium'
-									style={{ color: colors.onSurfaceVariant }}
-									numberOfLines={1}
+							<View style={styles.artistRow}>
+								<TouchableRipple
+									onPress={onArtistPress}
+									style={styles.artistName}
 								>
-									{currentTrack.artist.name}
-								</Text>
-							</TouchableRipple>
+									<Text
+										variant='bodyMedium'
+										style={{ color: colors.onSurfaceVariant }}
+										numberOfLines={1}
+									>
+										{currentTrack.artist.name}
+									</Text>
+								</TouchableRipple>
+								{canFollow && (
+									<Button
+										compact
+										mode={isFollowed ? 'text' : 'outlined'}
+										disabled={isRelationPending || isRelationMutationPending}
+										onPress={onFollowPress}
+										style={styles.followButton}
+									>
+										{isFollowed ? '已关注' : '关注'}
+									</Button>
+								)}
+							</View>
 						)}
 					</View>
 					{isBilibiliVideo && (
 						<View style={styles.thumbUpButtonContainer}>
 							<SkinThumbUpBurst
 								skin={activeSkin}
-								playSignal={thumbUpBurstSignal}
+								playSignal={favoriteBurstSignal}
 							/>
 							<IconButton
-								icon={isThumbUp ? 'heart' : 'heart-outline'}
+								icon={isInDefaultFavorite ? 'heart' : 'heart-outline'}
 								size={24}
-								iconColor={isThumbUp ? colors.error : colors.onSurfaceVariant}
-								onPress={onThumbUpPress}
+								iconColor={
+									isInDefaultFavorite ? colors.error : colors.onSurfaceVariant
+								}
+								disabled={isFavoriteStatusFetching}
+								loading={isFavoriteMutationPending}
+								onPress={onFavoritePress}
 							/>
 						</View>
 					)}
@@ -287,6 +350,17 @@ const styles = StyleSheet.create({
 	},
 	trackTitle: {
 		fontWeight: 'bold',
+	},
+	artistRow: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		gap: 8,
+	},
+	artistName: {
+		flexShrink: 1,
+	},
+	followButton: {
+		minWidth: 64,
 	},
 	thumbUpButtonContainer: {
 		position: 'relative',

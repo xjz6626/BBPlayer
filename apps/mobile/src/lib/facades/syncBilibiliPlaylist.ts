@@ -215,6 +215,89 @@ export class SyncBilibiliPlaylistFacade {
 	}
 
 	/**
+	 * 批量将 Bilibili tracks 录入本地数据库。
+	 * 返回的 tracks 使用本地数据库 ID，并保持输入顺序。
+	 */
+	public addTracksToLocal(tracks: BilibiliTrack[]) {
+		const distinctTracks = Array.from(
+			new Map(tracks.map((track) => [track.uniqueKey, track])).values(),
+		)
+		if (distinctTracks.length === 0) return okAsync<BilibiliTrack[]>([])
+
+		const keyedTracksResult = Result.combine(
+			distinctTracks.map((track) =>
+				generateUniqueTrackKey(track).map((uniqueKey) => ({
+					track,
+					uniqueKey,
+				})),
+			),
+		)
+		if (keyedTracksResult.isErr()) {
+			return errAsync(keyedTracksResult.error)
+		}
+		const keyedTracks = keyedTracksResult.value
+
+		for (const { track } of keyedTracks) {
+			if (!track.artist?.remoteId) {
+				return errAsync(
+					createValidationError(
+						`歌曲 ${track.uniqueKey} 缺少 artist remoteId，无法批量入库`,
+					),
+				)
+			}
+		}
+
+		return ResultAsync.fromPromise(
+			this.db.transaction(async (tx) => {
+				const artistSvc = this.artistService.withDB(tx)
+				const trackSvc = this.trackService.withDB(tx)
+				const artistResult = await artistSvc.findOrCreateManyRemoteArtists(
+					keyedTracks.map(({ track }) => ({
+						name: track.artist!.name,
+						source: track.artist!.source,
+						remoteId: track.artist!.remoteId,
+						avatarUrl: track.artist!.avatarUrl,
+						signature: track.artist!.signature,
+					})),
+				)
+				if (artistResult.isErr()) throw artistResult.error
+				const artistMap = artistResult.value
+
+				const trackResult = await trackSvc.findOrCreateManyTracks(
+					keyedTracks.map(({ track }) => ({
+						...track,
+						artistId: artistMap.get(track.artist!.remoteId!)?.id,
+					})),
+					'bilibili',
+				)
+				if (trackResult.isErr()) throw trackResult.error
+				const trackMap = trackResult.value
+
+				return keyedTracks.map(({ track, uniqueKey }) => {
+					const trackId = trackMap.get(uniqueKey)
+					const artist = artistMap.get(track.artist!.remoteId!)
+					if (!trackId || !artist) {
+						throw createValidationError(`歌曲 ${uniqueKey} 批量入库后无法回查`)
+					}
+					return {
+						...track,
+						id: trackId,
+						uniqueKey,
+						artist: {
+							...track.artist!,
+							id: artist.id,
+						},
+					}
+				})
+			}),
+			(e) =>
+				createFacadeError('BatchPersistTracksFailed', '批量录入歌曲失败', {
+					cause: e,
+				}),
+		)
+	}
+
+	/**
 	 * 将单一 track 录入到本地数据库
 	 * @param track Track 对象
 	 */
@@ -1017,7 +1100,7 @@ export class SyncBilibiliPlaylistFacade {
 					})
 
 					const replaceResult = await playlistSvc.replacePlaylistAllTracks(
-						localPlaylist.value.id,
+						playlistResult.value.id,
 						finalOrderedTrackIds,
 					)
 					if (replaceResult.isErr()) {
@@ -1026,7 +1109,7 @@ export class SyncBilibiliPlaylistFacade {
 					logger.debug('step 11: 替换 playlist 中所有 tracks 完成')
 					logger.info('同步收藏夹完成', {
 						remoteId: favoriteId,
-						playlistId: localPlaylist.value.id,
+						playlistId: playlistResult.value.id,
 					})
 
 					void analyticsService.logPlaylistSync(
@@ -1035,7 +1118,7 @@ export class SyncBilibiliPlaylistFacade {
 						finalOrderedTrackIds.length,
 					)
 
-					return localPlaylist.value.id
+					return playlistResult.value.id
 				}),
 				(e) =>
 					createFacadeError('SyncFavoriteFailed', '同步收藏夹失败', {

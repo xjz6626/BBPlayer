@@ -2,6 +2,8 @@ import { Icon } from '@expo/ui'
 import { usePathname, useRouter } from 'expo-router'
 import { useCallback } from 'react'
 
+import { useAddToDefaultFavorite } from '@/hooks/mutations/bilibili/favorite'
+import { usePersonalInformation } from '@/hooks/queries/bilibili/user'
 import { useModalStore } from '@/hooks/stores/useModalStore'
 import type { BilibiliTrack } from '@/types/core/media'
 import toast from '@/utils/toast'
@@ -26,12 +28,19 @@ const ARTIST_ICON = Icon.select({
 	android: import('@expo/material-symbols/person.xml'),
 })
 
+const FAVORITE_ICON = Icon.select({
+	ios: 'star',
+	android: import('@expo/material-symbols/bookmark_star.xml'),
+})
+
 export function usePlaylistMenu(
 	playTrack: (track: BilibiliTrack, playNext: boolean) => void,
 ) {
 	const router = useRouter()
 	const pathname = usePathname()
 	const openModal = useModalStore((state) => state.open)
+	const { data: personalInformation } = usePersonalInformation()
+	const { mutate: addToDefaultFavorite } = useAddToDefaultFavorite()
 
 	return useCallback(
 		(item: BilibiliTrack) => [
@@ -58,6 +67,20 @@ export function usePlaylistMenu(
 				},
 			},
 			{
+				title: '收藏到默认收藏夹',
+				leadingIcon: FAVORITE_ICON,
+				onPress: () => {
+					if (!personalInformation?.mid) {
+						toast.info('请先登录 B 站账号')
+						return
+					}
+					addToDefaultFavorite({
+						bvid: item.bilibiliMetadata.bvid,
+						userMid: personalInformation.mid,
+					})
+				},
+			},
+			{
 				title: '添加到本地歌单',
 				leadingIcon: ADD_TO_PLAYLIST_ICON,
 				onPress: () => {
@@ -79,6 +102,13 @@ export function usePlaylistMenu(
 				},
 			},
 		],
-		[router, openModal, playTrack, pathname],
+		[
+			router,
+			openModal,
+			playTrack,
+			pathname,
+			personalInformation?.mid,
+			addToDefaultFavorite,
+		],
 	)
 }

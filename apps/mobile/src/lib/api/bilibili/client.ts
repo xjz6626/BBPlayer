@@ -152,6 +152,60 @@ class ApiClient {
 	}
 
 	/**
+	 * Fetches a JSON document that is not wrapped in Bilibili's usual
+	 * `{ code, message, data }` response envelope (for example subtitle files).
+	 */
+	getRawJson<T>({
+		fullUrl,
+		skipCookie,
+		signal,
+	}: {
+		fullUrl: string
+		skipCookie?: boolean
+		signal?: AbortSignal
+	}): ResultAsync<T, BilibiliApiError> {
+		const cookieList = useAppStore.getState().bilibiliCookie
+		const cookie =
+			cookieList && !skipCookie ? serializeCookieObject(cookieList) : ''
+
+		return ResultAsync.fromPromise(
+			fetch(fullUrl, {
+				method: 'GET',
+				headers: {
+					Cookie: cookie,
+					'User-Agent':
+						'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 BiliApp/6.66.0',
+					Referer: 'https://www.bilibili.com/',
+					Origin: 'https://www.bilibili.com',
+				},
+				signal,
+				credentials: 'omit',
+			}),
+			toRequestError,
+		).andThen((response) => {
+			if (!response.ok) {
+				return errAsync(
+					new BilibiliApiError({
+						message: `请求 bilibili 字幕失败: ${response.status} ${response.statusText}`,
+						msgCode: response.status,
+						type: 'RequestFailed',
+					}),
+				)
+			}
+
+			return ResultAsync.fromPromise(
+				response.json() as Promise<T>,
+				(error) =>
+					new BilibiliApiError({
+						message: `解析 bilibili 字幕失败: ${error instanceof Error ? error.message : String(error)}`,
+						type: 'ResponseFailed',
+						cause: error,
+					}),
+			)
+		})
+	}
+
+	/**
 	 * 发送 GET 请求并返回 ArrayBuffer
 	 * @returns ResultAsync 包含 ArrayBuffer 或错误
 	 */
@@ -263,19 +317,49 @@ class ApiClient {
 	public postWithCsrf<T>({
 		endpoint,
 		payload = {},
+		csrfInQuery = false,
 	}: {
 		endpoint: string
 		payload?: Record<string, string>
+		csrfInQuery?: boolean
 	}): ResultAsync<T, BilibiliApiError> {
 		return getCsrfToken().asyncAndThen((csrfToken) => {
-			const dataWithCsrf = {
-				...payload,
-				csrf: csrfToken,
-			}
+			const dataWithCsrf = csrfInQuery
+				? payload
+				: { ...payload, csrf: csrfToken }
+			const requestEndpoint = csrfInQuery
+				? `${endpoint}${endpoint.includes('?') ? '&' : '?'}csrf=${encodeURIComponent(csrfToken)}`
+				: endpoint
 
 			const body = new URLSearchParams(dataWithCsrf).toString()
 
-			return this.post<T>({ endpoint, data: body })
+			return this.post<T>({ endpoint: requestEndpoint, data: body })
+		})
+	}
+
+	/**
+	 * 自动将 CSRF token 放入查询参数，并以 application/json 发送 POST 请求。
+	 *
+	 * Bilibili 的新版动态接口不接受通用的 x-www-form-urlencoded 请求体，
+	 * 不能与评论、收藏等旧接口共用 postWithCsrf。
+	 */
+	public postJsonWithCsrf<T>({
+		endpoint,
+		payload = {},
+	}: {
+		endpoint: string
+		payload?: Record<string, unknown>
+	}): ResultAsync<T, BilibiliApiError> {
+		return getCsrfToken().asyncAndThen((csrfToken) => {
+			const requestEndpoint = `${endpoint}${endpoint.includes('?') ? '&' : '?'}csrf=${encodeURIComponent(csrfToken)}`
+
+			return this.post<T>({
+				endpoint: requestEndpoint,
+				data: JSON.stringify(payload),
+				headers: {
+					'Content-Type': 'application/json',
+				},
+			})
 		})
 	}
 }

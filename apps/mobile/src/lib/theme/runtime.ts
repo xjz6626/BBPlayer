@@ -5,7 +5,9 @@ import { ServiceError } from '@/lib/errors'
 import { createSkinNotFound } from '@/lib/errors/service'
 import log from '@/utils/log'
 
+import { getDownloadedManifestAssetPath } from './downloadManager'
 import type { SkinAssetDeclaration } from './schema'
+import { resolveLibraryTabIconUrls } from './types'
 import type { AppSkin, InstalledSkin, InstalledSkinMeta } from './types'
 
 const appSkinCache = new Map<string, AppSkin | null>()
@@ -16,29 +18,71 @@ const toAbsolute = (rootUri: string, path: string | null): string | null => {
 	return `${rootUri.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`
 }
 
-const resolveAppSkinUris = (appSkin: AppSkin, rootUri: string): AppSkin => ({
+const resolveAppSkinUris = (
+	appSkin: AppSkin,
+	rootUri: string,
+	manifest: SkinAssetDeclaration,
+): AppSkin => ({
 	...appSkin,
-	skins: appSkin.skins.map((s) => ({
-		background: { head: toAbsolute(rootUri, s.background.head) },
-		tabBar: {
-			background: toAbsolute(rootUri, s.tabBar.background),
-			icons: {
-				home: {
-					default: toAbsolute(rootUri, s.tabBar.icons.home.default),
-					selected: toAbsolute(rootUri, s.tabBar.icons.home.selected),
-				},
-				library: {
-					default: toAbsolute(rootUri, s.tabBar.icons.library.default),
-					selected: toAbsolute(rootUri, s.tabBar.icons.library.selected),
-				},
-				settings: {
-					default: toAbsolute(rootUri, s.tabBar.icons.settings.default),
-					selected: toAbsolute(rootUri, s.tabBar.icons.settings.selected),
+	skins: appSkin.skins.map((s, index) => {
+		const manifestSkin = manifest.skins[index]
+		const libraryIcons = manifestSkin
+			? resolveLibraryTabIconUrls(manifestSkin)
+			: null
+
+		return {
+			background: { head: toAbsolute(rootUri, s.background.head) },
+			tabBar: {
+				background: toAbsolute(rootUri, s.tabBar.background),
+				icons: {
+					dynamic: {
+						default: toAbsolute(
+							rootUri,
+							s.tabBar.icons.dynamic?.default ??
+								getDownloadedManifestAssetPath(
+									manifest,
+									manifestSkin?.tail_icon_dynamic,
+								),
+						),
+						selected: toAbsolute(
+							rootUri,
+							s.tabBar.icons.dynamic?.selected ??
+								getDownloadedManifestAssetPath(
+									manifest,
+									manifestSkin?.tail_icon_selected_dynamic,
+								),
+						),
+					},
+					home: {
+						default: toAbsolute(rootUri, s.tabBar.icons.home.default),
+						selected: toAbsolute(rootUri, s.tabBar.icons.home.selected),
+					},
+					library: {
+						default: toAbsolute(
+							rootUri,
+							libraryIcons
+								? getDownloadedManifestAssetPath(manifest, libraryIcons.default)
+								: s.tabBar.icons.library.default,
+						),
+						selected: toAbsolute(
+							rootUri,
+							libraryIcons
+								? getDownloadedManifestAssetPath(
+										manifest,
+										libraryIcons.selected,
+									)
+								: s.tabBar.icons.library.selected,
+						),
+					},
+					settings: {
+						default: toAbsolute(rootUri, s.tabBar.icons.settings.default),
+						selected: toAbsolute(rootUri, s.tabBar.icons.settings.selected),
+					},
 				},
 			},
-		},
-		colors: s.colors,
-	})),
+			colors: s.colors,
+		}
+	}),
 	bootSplash: {
 		items:
 			appSkin.bootSplash.items?.map((item) => ({
@@ -103,7 +147,11 @@ export const loadActiveSkin = (
 
 		return ResultAsync.fromPromise(
 			(async () => {
-				const resolved = resolveAppSkinUris(skin.appSkin, meta.rootUri)
+				const resolved = resolveAppSkinUris(
+					skin.appSkin,
+					meta.rootUri,
+					skin.manifest,
+				)
 				appSkinCache.set(meta.id, resolved)
 				return resolved
 			})(),

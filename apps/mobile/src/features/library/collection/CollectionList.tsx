@@ -1,9 +1,12 @@
 import { LegendList } from '@legendapp/list/react-native'
 import { memo, useCallback, useState } from 'react'
-import { RefreshControl, StyleSheet, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
 import { Text, useTheme } from 'react-native-paper'
 
 import ActivityIndicator from '@/components/common/ActivityIndicator'
+import ThemedRefreshControl, {
+	ThemedRefreshIndicator,
+} from '@/components/theme/ThemedRefreshControl'
 import { DataFetchingError } from '@/features/library/shared/DataFetchingError'
 import TabDisable from '@/features/library/shared/TabDisabled'
 import { CollectionListSkeleton } from '@/features/library/skeletons/LibraryTabSkeleton'
@@ -83,7 +86,7 @@ const CollectionListComponent = memo(() => {
 				renderItem={renderCollectionItem}
 				recycleItems
 				refreshControl={
-					<RefreshControl
+					<ThemedRefreshControl
 						refreshing={refreshing || collectionsIsRefetching}
 						onRefresh={onRefresh}
 						colors={[colors.primary]}
@@ -91,6 +94,11 @@ const CollectionListComponent = memo(() => {
 					/>
 				}
 				keyExtractor={keyExtractor}
+				ListHeaderComponent={
+					<ThemedRefreshIndicator
+						refreshing={refreshing || collectionsIsRefetching}
+					/>
+				}
 				contentContainerStyle={{ paddingBottom: haveTrack ? 90 : 10 }}
 				showsVerticalScrollIndicator={false}
 				onEndReached={hasNextPage ? () => fetchNextPage() : undefined}

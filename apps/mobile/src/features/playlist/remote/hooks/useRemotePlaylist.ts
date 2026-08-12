@@ -24,11 +24,11 @@ export function useRemotePlaylist() {
 				return
 			}
 			void addToQueue({
-				tracks: [track],
+				tracks: [createIt.value],
 				playNow: !playNext,
 				clearQueue: false,
 				playNext: playNext,
-				startFromKey: track.uniqueKey,
+				startFromKey: createIt.value.uniqueKey,
 			})
 		},
 		[],

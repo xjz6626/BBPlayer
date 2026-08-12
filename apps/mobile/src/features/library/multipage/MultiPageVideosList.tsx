@@ -1,9 +1,12 @@
 import { LegendList } from '@legendapp/list/react-native'
 import { memo, useCallback, useState } from 'react'
-import { RefreshControl, StyleSheet, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
 import { Text, useTheme } from 'react-native-paper'
 
 import ActivityIndicator from '@/components/common/ActivityIndicator'
+import ThemedRefreshControl, {
+	ThemedRefreshIndicator,
+} from '@/components/theme/ThemedRefreshControl'
 import { DataFetchingError } from '@/features/library/shared/DataFetchingError'
 import TabDisable from '@/features/library/shared/TabDisabled'
 import { MultiPageVideosListSkeleton } from '@/features/library/skeletons/LibraryTabSkeleton'
@@ -113,13 +116,20 @@ const MultiPageVideosListComponent = memo(() => {
 				recycleItems
 				keyExtractor={keyExtractor}
 				refreshControl={
-					<RefreshControl
+					<ThemedRefreshControl
 						refreshing={
 							refreshing || playlistsIsRefetching || isFavoriteDataRefetching
 						}
 						onRefresh={onRefresh}
 						colors={[colors.primary]}
 						progressViewOffset={50}
+					/>
+				}
+				ListHeaderComponent={
+					<ThemedRefreshIndicator
+						refreshing={
+							refreshing || playlistsIsRefetching || isFavoriteDataRefetching
+						}
 					/>
 				}
 				ListEmptyComponent={

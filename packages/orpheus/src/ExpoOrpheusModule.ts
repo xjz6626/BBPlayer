@@ -29,6 +29,13 @@ export interface Track {
 	duration?: number
 }
 
+export interface TrackAudioEffectProfile {
+	/** 单曲相对增益，单位为 dB；Android 原生端限制在 -12 到 +6。 */
+	volumeDb: number
+	/** 人声凸显强度，范围为 0 到 1。 */
+	vocalStrength: number
+}
+
 export interface LyricSpan {
 	text: string
 	startTime: number // ms
@@ -250,8 +257,11 @@ declare class NativeOrpheusModule extends NativeModule<OrpheusEvents> {
 	/**
 	 * 将曲目追加到队列末尾。
 	 *
-	 * `clearQueue` 为 true 时会先清空现有队列。`startFromId` 命中本次追加的曲目时，
-	 * 原生端会跳转到该新插入曲目，prepare 播放器并开始播放。
+	 * 同一 `id` 在队列中只保留一项；重复追加时不会创建副本。如果 `startFromId`
+	 * 已经存在于队列，原生端会直接跳转到现有项。
+	 *
+	 * `clearQueue` 为 true 时会先清空现有队列。`startFromId` 命中最终队列中的曲目时，
+	 * 原生端会跳转到该曲目，prepare 播放器并开始播放。
 	 */
 	addToEnd(
 		tracks: Track[],
@@ -383,6 +393,16 @@ declare class NativeOrpheusModule extends NativeModule<OrpheusEvents> {
 	setPlaybackSpeed(speed: number): Promise<void>
 	/** 返回当前原生播放倍速。 */
 	getPlaybackSpeed(): Promise<number>
+	/** 读取指定歌曲持久化的音量和人声凸显设置。 */
+	getTrackAudioEffectProfile(trackId: string): Promise<TrackAudioEffectProfile>
+	/** 保存并立即应用指定歌曲的音量和人声凸显设置。 */
+	setTrackAudioEffectProfile(
+		trackId: string,
+		volumeDb: number,
+		vocalStrength: number,
+	): Promise<void>
+	/** 删除指定歌曲的音效设置并立即恢复默认值。 */
+	resetTrackAudioEffectProfile(trackId: string): Promise<void>
 	/**
 	 * 触发原生播放错误路径，用于调试错误处理。
 	 *
@@ -395,6 +415,14 @@ declare class NativeOrpheusModule extends NativeModule<OrpheusEvents> {
 	 * 建议复用长度为 `SPECTRUM_SIZE` 的 `Float32Array`，避免在动画循环中反复分配。
 	 */
 	updateSpectrumData(destination: Float32Array): void
+	/**
+	 * Android only: starts or stops native spectrum capture for the visible visualizer.
+	 */
+	setSpectrumCaptureEnabled(enabled: boolean): void
+	/**
+	 * Android only: controls foreground-only high-frequency bridge updates.
+	 */
+	setAppForeground(foreground: boolean): void
 	/**
 	 * 从 `uris` 中筛出原生 LRU 缓存当前已知的完整缓存 URI。
 	 *

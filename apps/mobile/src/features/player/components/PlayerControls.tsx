@@ -16,6 +16,7 @@ import ActivityIndicator from '@/components/common/ActivityIndicator'
 import IconButton from '@/components/common/IconButton'
 import useCurrentTrack from '@/hooks/player/useCurrentTrack'
 import { useShuffleMode } from '@/hooks/queries/orpheus'
+import { useModalStore } from '@/hooks/stores/useModalStore'
 import { analyticsService } from '@/lib/services/analyticsService'
 import { toastAndLogError } from '@/utils/error-handling'
 import * as Haptics from '@/utils/haptics'
@@ -248,6 +249,7 @@ export function PlayerControls({ onOpenQueue }: { onOpenQueue: () => void }) {
 	const [repeatMode, setRepeatMode] = useState(RepeatMode.OFF)
 	const currentTrack = useCurrentTrack()
 	const router = useRouter()
+	const openModal = useModalStore((state) => state.open)
 
 	useEffect(() => {
 		void Orpheus.getRepeatMode().then(setRepeatMode)
@@ -267,6 +269,17 @@ export function PlayerControls({ onOpenQueue }: { onOpenQueue: () => void }) {
 				<MainPlaybackControls />
 			</View>
 			<View style={styles.secondaryControlsContainer}>
+				<IconButton
+					icon='equalizer'
+					size={24}
+					disabled={!currentTrack}
+					iconColor={colors.onSurfaceVariant}
+					onPress={() => {
+						void Haptics.performHaptics(Haptics.AndroidHaptics.Context_Click)
+						openModal('SingleTrackEffects', undefined)
+					}}
+					testID='player-single-track-effects'
+				/>
 				<IconButton
 					icon={shuffleMode ? 'shuffle-variant' : 'shuffle-disabled'}
 					size={24}
@@ -356,7 +369,7 @@ const styles = StyleSheet.create({
 		marginTop: 12,
 		flexDirection: 'row',
 		alignItems: 'center',
-		justifyContent: 'center',
-		gap: 32,
+		justifyContent: 'space-between',
+		paddingHorizontal: 8,
 	},
 })

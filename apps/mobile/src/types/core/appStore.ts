@@ -1,10 +1,13 @@
 import type { Result } from 'neverthrow'
 
+type AppThemeMode = 'system' | 'light' | 'dark'
+
 interface Settings {
 	sendPlayHistory: boolean
 	enableDebugLog: boolean
 	enableOldSchoolStyleLyric: boolean
 	enableSpectrumVisualizer: boolean
+	themeMode: AppThemeMode
 	playerBackgroundStyle: 'gradient' | 'md3'
 	nowPlayingBarStyle: 'float' | 'bottom'
 	lyricSource: 'auto' | 'netease' | 'qqmusic' | 'kugou'
@@ -59,4 +62,10 @@ interface AppState {
 	setEnableDataCollection: (value: boolean) => void
 }
 
-export type { AppState, BBPlayerAccount, BilibiliUserSummary, Settings }
+export type {
+	AppState,
+	AppThemeMode,
+	BBPlayerAccount,
+	BilibiliUserSummary,
+	Settings,
+}

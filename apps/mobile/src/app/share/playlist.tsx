@@ -2,7 +2,7 @@ import * as Clipboard from 'expo-clipboard'
 import { useImage } from 'expo-image'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useState } from 'react'
-import { RefreshControl, StyleSheet, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
 import {
 	Appbar,
 	Avatar,
@@ -16,6 +16,9 @@ import {
 import Button from '@/components/common/Button'
 import CoverWithPlaceHolder from '@/components/common/CoverWithPlaceHolder'
 import NowPlayingBar from '@/components/NowPlayingBar'
+import ThemedRefreshControl, {
+	ThemedRefreshIndicator,
+} from '@/components/theme/ThemedRefreshControl'
 import { PlaylistError } from '@/features/playlist/remote/components/PlaylistError'
 import { TrackList } from '@/features/playlist/remote/components/RemoteTrackList'
 import { useRemotePlaylist } from '@/features/playlist/remote/hooks/useRemotePlaylist'
@@ -204,6 +207,7 @@ export default function SharedPlaylistPreviewPage() {
 					selection={selection}
 					ListHeaderComponent={
 						<>
+							<ThemedRefreshIndicator refreshing={refreshing} />
 							<View style={styles.playlistHeader}>
 								{/* 封面 + 文字列 */}
 								<View style={styles.headerContainer}>
@@ -343,7 +347,7 @@ export default function SharedPlaylistPreviewPage() {
 						</>
 					}
 					refreshControl={
-						<RefreshControl
+						<ThemedRefreshControl
 							refreshing={refreshing}
 							onRefresh={async () => {
 								setRefreshing(true)

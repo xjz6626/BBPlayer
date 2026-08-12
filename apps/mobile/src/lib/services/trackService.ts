@@ -329,7 +329,10 @@ export class TrackService {
 					throw createTrackNotFound(uniqueKey)
 				}
 
-				await this.addPlayRecordFromTrackId(trackId, record)
+				const addResult = await this.addPlayRecordFromTrackId(trackId, record)
+				if (addResult.isErr()) {
+					throw addResult.error
+				}
 
 				return true as const
 			})(),
@@ -881,7 +884,13 @@ export class TrackService {
 			(Date.now() - days * 24 * 60 * 60 * 1000) / 1000,
 		)
 
-		const normalizedStartTime = schema.playHistory.startTime
+		const normalizedStartTimeS = sql<number>`
+			CASE
+				WHEN ${schema.playHistory.startTime} > 10000000000
+					THEN ${schema.playHistory.startTime} / 1000
+				ELSE ${schema.playHistory.startTime}
+			END
+		`
 
 		// Subquery: aggregate total duration played per track
 		const durationSumSql = this.db
@@ -892,7 +901,7 @@ export class TrackService {
 				),
 			})
 			.from(schema.playHistory)
-			.where(sql`${normalizedStartTime} >= ${cutoffTimeS}`)
+			.where(sql`${normalizedStartTimeS} >= ${cutoffTimeS}`)
 			.groupBy(schema.playHistory.trackId)
 			.as('duration_sums')
 

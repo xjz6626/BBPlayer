@@ -15,7 +15,7 @@ import toast from '@/utils/toast'
 const logger = Log.extend('SaveQueueToPlaylistModal')
 
 export default function SaveQueueToPlaylistModal({
-	trackIds,
+	tracks,
 }: ModalPropsMap['SaveQueueToPlaylist']) {
 	const [name, setName] = useState('')
 	const [loading, setLoading] = useState(false)
@@ -25,7 +25,7 @@ export default function SaveQueueToPlaylistModal({
 		if (!name.trim()) return
 		setLoading(true)
 
-		const res = await playlistFacade.saveQueueAsPlaylist(name, trackIds)
+		const res = await playlistFacade.saveQueueAsPlaylist(name, tracks)
 
 		if (res.isErr()) {
 			toastAndLogError(
@@ -38,16 +38,27 @@ export default function SaveQueueToPlaylistModal({
 		}
 
 		logger.info('保存队列到播放列表成功', res.value)
-		toast.success('保存队列到播放列表成功')
+		if (res.value.skippedCount > 0) {
+			toast.info(`已保存 ${res.value.savedCount} 首歌曲`, {
+				description: `${res.value.skippedCount} 首异常歌曲无法恢复，已跳过`,
+			})
+		} else {
+			toast.success('保存队列到播放列表成功', {
+				description:
+					res.value.recoveredCount > 0
+						? `已自动恢复 ${res.value.recoveredCount} 首未入库歌曲`
+						: undefined,
+			})
+		}
 		await Promise.all([
 			queryClient.invalidateQueries({
 				queryKey: playlistKeys.playlistLists(),
 			}),
 			queryClient.invalidateQueries({
-				queryKey: playlistKeys.playlistContents(res.value),
+				queryKey: playlistKeys.playlistContents(res.value.playlistId),
 			}),
 			queryClient.invalidateQueries({
-				queryKey: playlistKeys.playlistMetadata(res.value),
+				queryKey: playlistKeys.playlistMetadata(res.value.playlistId),
 			}),
 		])
 		setLoading(false)

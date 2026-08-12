@@ -1,32 +1,66 @@
 import { useQuery } from '@tanstack/react-query'
-import { count, desc, sql } from 'drizzle-orm'
+import dayjs from 'dayjs'
+import { and, count, desc, gte, lt, or, sql } from 'drizzle-orm'
 
 import drizzleDb from '@/lib/db/db'
 import * as schema from '@/lib/db/schema'
 import { trackService } from '@/lib/services/trackService'
 import type { Track } from '@/types/core/media'
+import {
+	getPlayHistoryTimestampRange,
+	type PlayHistoryHeatmapRange,
+} from '@/utils/playHistoryDateRange'
 
 export const playHistoryKeys = {
 	all: ['playHistory'] as const,
-	heatmap: () => [...playHistoryKeys.all, 'heatmap'] as const,
+	heatmap: (range: PlayHistoryHeatmapRange) =>
+		[
+			...playHistoryKeys.all,
+			'heatmap',
+			range.startDateKey,
+			range.endDateKey,
+			range.startTimeMs,
+			range.endTimeMs,
+			range.startTimeSeconds,
+			range.endTimeSeconds,
+		] as const,
 	byDate: (date: string) => [...playHistoryKeys.all, 'byDate', date] as const,
 	topPlayed: (days: number, limit: number) =>
 		[...playHistoryKeys.all, 'topPlayed', days, limit] as const,
 }
 
-export const usePlayHistoryHeatmap = () => {
+export const usePlayHistoryHeatmap = (range: PlayHistoryHeatmapRange) => {
 	return useQuery({
-		queryKey: playHistoryKeys.heatmap(),
+		queryKey: playHistoryKeys.heatmap(range),
 		queryFn: async () => {
+			const localDate = sql<string>`date(
+				CASE
+					WHEN ${schema.playHistory.startTime} > 10000000000
+						THEN ${schema.playHistory.startTime} / 1000
+					ELSE ${schema.playHistory.startTime}
+				END,
+				'unixepoch',
+				'localtime'
+			)`
 			const result = await drizzleDb
 				.select({
-					date: sql<string>`date(${schema.playHistory.startTime} / 1000, 'unixepoch', 'localtime')`,
+					date: localDate,
 					count: count(),
 				})
 				.from(schema.playHistory)
-				.groupBy(
-					sql`date(${schema.playHistory.startTime} / 1000, 'unixepoch', 'localtime')`,
+				.where(
+					or(
+						and(
+							gte(schema.playHistory.startTime, range.startTimeMs),
+							lt(schema.playHistory.startTime, range.endTimeMs),
+						),
+						and(
+							gte(schema.playHistory.startTime, range.startTimeSeconds),
+							lt(schema.playHistory.startTime, range.endTimeSeconds),
+						),
+					),
 				)
+				.groupBy(localDate)
 
 			const data: Record<string, number> = {}
 			result.forEach((row) => {
@@ -45,10 +79,23 @@ export const usePlayHistoryByDate = (dateStr: string) => {
 	return useQuery({
 		queryKey: playHistoryKeys.byDate(dateStr),
 		queryFn: async () => {
+			const date = dayjs(dateStr)
+			const startTimeMs = date.startOf('day').valueOf()
+			const endTimeMs = date.add(1, 'day').startOf('day').valueOf()
+			const range = getPlayHistoryTimestampRange(startTimeMs, endTimeMs)
+
 			const historyRows = await drizzleDb.query.playHistory.findMany({
-				where: (ph, { sql: sqlFn }) => {
-					return sqlFn`date(${ph.startTime} / 1000, 'unixepoch', 'localtime') = ${dateStr}`
-				},
+				where: (ph, { and: andFn, gte: gteFn, lt: ltFn, or: orFn }) =>
+					orFn(
+						andFn(
+							gteFn(ph.startTime, range.startTimeMs),
+							ltFn(ph.startTime, range.endTimeMs),
+						),
+						andFn(
+							gteFn(ph.startTime, range.startTimeSeconds),
+							ltFn(ph.startTime, range.endTimeSeconds),
+						),
+					),
 				with: {
 					track: {
 						with: {
@@ -70,10 +117,12 @@ export const usePlayHistoryByDate = (dateStr: string) => {
 						...track,
 						historyId: row.id,
 						playedAt: row.startTime,
+						durationPlayed: row.durationPlayed,
+						completed: row.completed,
 					}
 				})
 		},
-		enabled: !!dateStr,
+		enabled: !!dateStr && dayjs(dateStr).isValid(),
 		networkMode: 'always',
 		staleTime: 0,
 	})

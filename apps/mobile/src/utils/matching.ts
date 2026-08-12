@@ -53,5 +53,9 @@ export function lcsScore(s1: string, s2: string): number {
  * @returns Cleaned string
  */
 export function cleanString(str: string): string {
-	return str.toLowerCase().replace(/[^\w\u4e00-\u9fa5]/g, '') // Keep alphanumeric and Chinese
+	return str
+		.normalize('NFKC')
+		.toLowerCase()
+		.replace(/[\ufe00-\ufe0f\u{e0100}-\u{e01ef}]/gu, '')
+		.replace(/[^\p{Letter}\p{Number}_]/gu, '')
 }

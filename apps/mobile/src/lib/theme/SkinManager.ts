@@ -9,7 +9,7 @@
  */
 
 import * as FileSystem from 'expo-file-system'
-import { errAsync, okAsync, ResultAsync } from 'neverthrow'
+import { okAsync, ResultAsync } from 'neverthrow'
 
 import useSkinStore from '@/hooks/stores/useSkinStore'
 import type { GarbSkinSearchResult } from '@/lib/api/bilibili/garb'
@@ -30,12 +30,15 @@ import type { InstalledSkin, InstalledSkinMeta } from './types'
 // 路径
 // ============================================================
 
-const skinsDir = new FileSystem.Directory(FileSystem.Paths.document, 'skins/')
+const getSkinsDir = () =>
+	new FileSystem.Directory(FileSystem.Paths.document, 'skins/')
 
 const ensureSkinsDir = () => {
+	const skinsDir = getSkinsDir()
 	if (!skinsDir.exists) {
 		skinsDir.create({ idempotent: true, intermediates: true })
 	}
+	return skinsDir
 }
 
 // ============================================================
@@ -50,10 +53,16 @@ const deriveSkinId = (item: GarbSkinSearchResult): string => {
 	) {
 		return `collection_${item.actId}_${item.lotteryId}`
 	}
-	if (item.kind === 'suit') {
-		return `suit_${item.itemId ?? 'unknown'}`
+	if (item.kind === 'suit' && item.itemId !== null) {
+		return `suit_${item.itemId}`
 	}
-	throw new Error(`不支持的皮肤类型: ${item.kind}`)
+	if (item.kind === 'collection') {
+		throw new Error('收藏集搜索结果缺少 act_id 或 lottery_id')
+	}
+	if (item.kind === 'suit') {
+		throw new Error('主题装扮搜索结果缺少 item_id')
+	}
+	throw new Error('当前装扮类型暂不支持下载')
 }
 
 const deriveSkinIdFromSource = (source: InstalledSkin['source']): string => {
@@ -68,7 +77,7 @@ const deriveSkinIdFromSource = (source: InstalledSkin['source']): string => {
 
 const skinJsonFile = (skinId: string): FileSystem.File =>
 	new FileSystem.File(
-		new FileSystem.Directory(skinsDir, `${skinId}/`),
+		new FileSystem.Directory(getSkinsDir(), `${skinId}/`),
 		'skin.json',
 	)
 
@@ -109,111 +118,98 @@ export const installSkin = (
 	item: GarbSkinSearchResult,
 	options: InstallSkinOptions = {},
 ): ResultAsync<InstalledSkin, ServiceError> => {
-	const skinId = deriveSkinId(item)
-	log.debug('[skin-mgr] install started', {
-		skinId,
-		kind: item.kind,
-		name: item.name,
-	})
+	return ResultAsync.fromPromise(
+		(async () => {
+			const skinId = deriveSkinId(item)
+			log.debug('[skin-mgr] install started', {
+				skinId,
+				kind: item.kind,
+				name: item.name,
+			})
 
-	return fetchGarbSkinAssetDeclaration(item, options.signal).andThen(
-		(manifest) => {
+			const manifestResult = await fetchGarbSkinAssetDeclaration(
+				item,
+				options.signal,
+			)
+			if (manifestResult.isErr()) throw manifestResult.error
+			const manifest = manifestResult.value
+
 			const tempDir = new FileSystem.Directory(
 				FileSystem.Paths.cache ?? FileSystem.Paths.document,
 				`skin-install-${Date.now().toString(36)}/`,
 			)
-			tempDir.create({ idempotent: true, intermediates: true })
+			try {
+				tempDir.create({ idempotent: true, intermediates: true })
 
-			return downloadManifestAssets({
-				manifest,
-				outputDirectory: tempDir,
-				onProgress: options.onProgress
-					? (p) => {
-							options.onProgress?.({
-								completed: p.completed,
-								label: p.label,
-								progress: p.progress,
-								total: p.total,
-							})
-						}
-					: undefined,
-				signal: options.signal,
-			})
-				.andThen(({ mapping }) => {
-					const finalDir = new FileSystem.Directory(skinsDir, `${skinId}/`)
-					const source =
-						item.kind === 'collection'
-							? ({
-									actId: item.actId!,
-									kind: 'collection',
-									lotteryId: item.lotteryId!,
-								} as const)
-							: ({
-									itemId: item.itemId!,
-									kind: 'suit',
-								} as const)
-
-					const result = transformManifestToInstalledSkin({
-						manifest,
-						mapping,
-						rootUri: finalDir.uri,
-						skinId,
-						source,
-					})
-					if (result.isErr()) return errAsync(result.error)
-					const installedSkin = result.value
-
-					return ResultAsync.fromPromise(
-						(async () => {
-							await writeSkinJson(installedSkin, tempDir)
-
-							ensureSkinsDir()
-
-							if (finalDir.exists) {
-								finalDir.delete()
-								useSkinStore.getState().removeInstalledSkin(skinId)
-							}
-
-							await tempDir.move(finalDir)
-							useSkinStore.getState().addInstalledSkin(installedSkin)
-
-							log.debug('[skin-mgr] install completed', {
-								skinId,
-								finalDir: finalDir.uri,
-							})
-							return installedSkin
-						})(),
-						(e) => {
-							log.error('[skin-mgr] install failed', {
-								skinId,
-								error: e instanceof Error ? e.message : String(e),
-							})
-							// best-effort cleanup
-							if (tempDir.exists) {
-								try {
-									tempDir.delete()
-								} catch {
-									// ignore
-								}
-							}
-							return createSkinInstallFailed(
-								e instanceof Error ? e.message : String(e),
-								e,
-							)
-						},
-					)
+				const downloadResult = await downloadManifestAssets({
+					manifest,
+					outputDirectory: tempDir,
+					onProgress: options.onProgress,
+					signal: options.signal,
 				})
-				.orElse((error) => {
-					// cleanup temp dir on any upstream error
-					if (tempDir.exists) {
-						try {
-							tempDir.delete()
-						} catch {
-							// ignore
-						}
+				if (downloadResult.isErr()) throw downloadResult.error
+
+				const skinsDir = ensureSkinsDir()
+				const finalDir = new FileSystem.Directory(skinsDir, `${skinId}/`)
+				const source =
+					item.kind === 'collection'
+						? ({
+								actId: item.actId!,
+								kind: 'collection',
+								lotteryId: item.lotteryId!,
+							} as const)
+						: ({
+								itemId: item.itemId!,
+								kind: 'suit',
+							} as const)
+
+				const transformResult = transformManifestToInstalledSkin({
+					manifest,
+					mapping: downloadResult.value.mapping,
+					rootUri: finalDir.uri,
+					skinId,
+					source,
+				})
+				if (transformResult.isErr()) throw transformResult.error
+				const installedSkin = transformResult.value
+
+				await writeSkinJson(installedSkin, tempDir)
+
+				if (finalDir.exists) {
+					finalDir.delete()
+					useSkinStore.getState().removeInstalledSkin(skinId)
+				}
+
+				await tempDir.move(finalDir)
+				useSkinStore.getState().addInstalledSkin(installedSkin)
+
+				log.debug('[skin-mgr] install completed', {
+					skinId,
+					finalDir: finalDir.uri,
+				})
+				return installedSkin
+			} catch (error) {
+				if (tempDir.exists) {
+					try {
+						tempDir.delete()
+					} catch {
+						// ignore
 					}
-					return errAsync(error)
-				})
+				}
+				throw error
+			}
+		})(),
+		(error) => {
+			log.error('[skin-mgr] install failed', {
+				name: item.name,
+				error: error instanceof Error ? error.message : String(error),
+			})
+			return error instanceof ServiceError
+				? error
+				: createSkinInstallFailed(
+						error instanceof Error ? error.message : String(error),
+						error,
+					)
 		},
 	)
 }
@@ -234,7 +230,7 @@ export const uninstallSkin = (
 
 	return ResultAsync.fromPromise(
 		(async () => {
-			const dir = new FileSystem.Directory(skinsDir, `${skinId}/`)
+			const dir = new FileSystem.Directory(getSkinsDir(), `${skinId}/`)
 			if (dir.exists) {
 				dir.delete()
 			}

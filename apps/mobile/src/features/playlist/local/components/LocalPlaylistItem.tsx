@@ -1,7 +1,7 @@
 import { DownloadState } from '@bbplayer/orpheus'
 import { Icon as ExpoIcon } from '@expo/ui'
 import { memo, useCallback } from 'react'
-import { Easing, StyleSheet, useColorScheme, View } from 'react-native'
+import { Easing, StyleSheet, View } from 'react-native'
 import {
 	usePanGesture,
 	GestureDetector,
@@ -14,6 +14,7 @@ import CoverWithPlaceHolder from '@/components/common/CoverWithPlaceHolder'
 import UniversalCheckbox from '@/components/common/UniversalCheckbox'
 import { VariantPlainText } from '@/components/common/VariantPlainText'
 import useIsCurrentTrack from '@/hooks/player/useIsCurrentTrack'
+import useResolvedColorScheme from '@/hooks/theme/useResolvedColorScheme'
 import {
 	LIST_ITEM_COVER_SIZE,
 	LIST_ITEM_BORDER_RADIUS,
@@ -80,7 +81,7 @@ export const TrackListItem = memo(function TrackListItem({
 	downloadState,
 }: TrackListItemProps) {
 	const theme = useTheme()
-	const dark = useColorScheme() === 'dark'
+	const dark = useResolvedColorScheme() === 'dark'
 	const isCurrentTrack = useIsCurrentTrack(data.uniqueKey)
 
 	const highlighted = (isCurrentTrack && !selectMode) || isSelected

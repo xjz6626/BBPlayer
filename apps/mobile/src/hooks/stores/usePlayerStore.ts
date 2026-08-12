@@ -3,10 +3,49 @@ import { create } from 'zustand'
 
 import { trackService } from '@/lib/services/trackService'
 import type { Track } from '@/types/core/media'
-import { toastAndLogError } from '@/utils/error-handling'
 import log from '@/utils/log'
 
 const logger = log.extend('Store.Player')
+
+const createFallbackTrack = (track: OrpheusTrack): Track | null => {
+	try {
+		const url = new URL(track.url)
+		if (url.protocol !== 'orpheus:' || url.hostname !== 'bilibili') return null
+		const bvid = url.searchParams.get('bvid')
+		if (!bvid) return null
+		const cidParam = url.searchParams.get('cid')
+		const parsedCid = cidParam ? Number(cidParam) : null
+		const cid = Number.isFinite(parsedCid) ? parsedCid : null
+		const uniqueKey = track.id
+		return {
+			id: -1,
+			uniqueKey,
+			source: 'bilibili',
+			title: track.title ?? '未知曲目',
+			artist: track.artist
+				? {
+						id: -1,
+						name: track.artist,
+						source: 'bilibili',
+						createdAt: new Date(),
+						updatedAt: new Date(),
+					}
+				: null,
+			coverUrl: track.artwork ?? null,
+			duration: track.duration ?? 0,
+			createdAt: new Date(),
+			updatedAt: new Date(),
+			bilibiliMetadata: {
+				bvid,
+				cid,
+				isMultiPage: cid !== null,
+				videoIsValid: true,
+			},
+		}
+	} catch {
+		return null
+	}
+}
 
 interface PlayerState {
 	orpheusTrack: OrpheusTrack | null
@@ -53,8 +92,19 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 				if (get().orpheusTrack?.id !== newTrackId) return
 
 				if (result.isErr()) {
-					set({ internalTrack: null })
-					toastAndLogError('读取当前曲目信息失败', result.error, 'Store.Player')
+					const fallbackTrack = createFallbackTrack(currentTrack)
+					if (fallbackTrack) {
+						set({ internalTrack: fallbackTrack })
+						logger.warning('读取当前曲目信息失败，已使用播放器队列信息回退', {
+							trackId: currentTrack.id,
+							error: result.error,
+						})
+						return
+					}
+					logger.warning('读取当前曲目信息失败，保留上一首曲目信息', {
+						trackId: currentTrack.id,
+						error: result.error,
+					})
 					return
 				}
 				set({ internalTrack: result.value })

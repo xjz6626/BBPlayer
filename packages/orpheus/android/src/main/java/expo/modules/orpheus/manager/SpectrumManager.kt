@@ -7,10 +7,15 @@ import kotlin.math.hypot
 class SpectrumManager {
     private var visualizer: Visualizer? = null
     private var isEnabled = false
+    private var audioSessionId: Int? = null
     private val fftSize = Visualizer.getCaptureSizeRange()[1] // Max capture size (usually 1024)
     private var fftBytes = ByteArray(fftSize)
 
     fun start(audioSessionId: Int) {
+        if (isEnabled && visualizer != null && this.audioSessionId == audioSessionId) {
+            return
+        }
+
         if (visualizer != null) {
             stop()
         }
@@ -38,9 +43,10 @@ class SpectrumManager {
                 enabled = true
             }
             isEnabled = true
+            this.audioSessionId = audioSessionId
         } catch (e: Exception) {
             Log.e("Orpheus", "Failed to initialize Visualizer: ${e.message}")
-            isEnabled = false
+            stop()
         }
     }
 
@@ -53,6 +59,7 @@ class SpectrumManager {
         } finally {
             visualizer = null
             isEnabled = false
+            audioSessionId = null
         }
     }
 

@@ -71,7 +71,7 @@ export default function DateHistoryPage() {
 				trackMap.set(key, { track: record, playCount: 0 })
 			}
 			trackMap.get(key)!.playCount += 1
-			duration += record.duration ?? 0
+			duration += record.durationPlayed
 		}
 
 		const sortedTracks = Array.from(trackMap.values()).sort(

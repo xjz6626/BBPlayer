@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { View } from 'react-native'
+import type { StyleProp, ViewStyle } from 'react-native'
+import { StyleSheet, View } from 'react-native'
 import { RNSvgaPlayer, SvgaPlayerRef } from 'rn-newarch-svga-player'
 
 import useSkinStore from '@/hooks/stores/useSkinStore'
@@ -7,15 +8,19 @@ import type { AppSkin } from '@/lib/theme/types'
 import log from '@/utils/log'
 
 interface SkinThumbUpBurstProps {
-	skin: AppSkin | null
 	playSignal: number
+	size?: number
+	skin: AppSkin | null
+	style?: StyleProp<ViewStyle>
 }
 
-const DISPLAY_SIZE = 96
+const DEFAULT_SIZE = 96
 
 const SkinThumbUpBurst = memo(function SkinThumbUpBurst({
-	skin,
 	playSignal,
+	size = DEFAULT_SIZE,
+	skin,
+	style,
 }: SkinThumbUpBurstProps) {
 	const [visible, setVisible] = useState(false)
 	const playerRef = useRef<SvgaPlayerRef>(null)
@@ -33,16 +38,14 @@ const SkinThumbUpBurst = memo(function SkinThumbUpBurst({
 			durationMs: playbackDuration,
 		})
 
-		const visibleDuration = playbackDuration + 520
-
 		setVisible(true)
-
 		playerRef.current?.startAnimation()
 
-		const hideTimer = setTimeout(() => setVisible(false), visibleDuration)
-		return () => {
-			clearTimeout(hideTimer)
-		}
+		const hideTimer = setTimeout(
+			() => setVisible(false),
+			playbackDuration + 520,
+		)
+		return () => clearTimeout(hideTimer)
 	}, [animation, playSignal, playbackDuration])
 
 	if (!visible || !animation) return null
@@ -50,30 +53,27 @@ const SkinThumbUpBurst = memo(function SkinThumbUpBurst({
 	return (
 		<View
 			pointerEvents='none'
-			style={[
-				{
-					position: 'absolute',
-					right: -25,
-					bottom: 40,
-					width: DISPLAY_SIZE,
-					height: DISPLAY_SIZE,
-					zIndex: 10,
-				},
-			]}
+			style={[styles.container, { height: size, width: size }, style]}
 		>
 			<RNSvgaPlayer
 				ref={playerRef}
 				source={animation}
-				autoPlay={true}
+				autoPlay
 				loops={1}
 				clearsAfterStop={false}
-				style={{
-					width: DISPLAY_SIZE,
-					height: DISPLAY_SIZE,
-				}}
+				style={{ height: size, width: size }}
 			/>
 		</View>
 	)
+})
+
+const styles = StyleSheet.create({
+	container: {
+		position: 'absolute',
+		right: -25,
+		bottom: 40,
+		zIndex: 10,
+	},
 })
 
 export default SkinThumbUpBurst

@@ -14,6 +14,7 @@ import type {
 	BilibiliSearchSuggestionItem,
 	BilibiliSmsLoginData,
 	BilibiliSmsSendData,
+	BilibiliSubtitleData,
 	BilibiliToViewVideoList,
 	BilibiliWebPlayerInfo,
 } from '@/types/apis/bilibili'
@@ -23,16 +24,21 @@ import {
 	type BilibiliCollection,
 	type BilibiliCollectionAllContents,
 	type BilibiliDealFavoriteForOneVideoResponse,
+	type BilibiliDynamicFeed,
+	type BilibiliDynamicFeedUpdate,
 	type BilibiliFavoriteListAllContents,
 	type BilibiliFavoriteListContents,
+	type BilibiliFollowingList,
 	type BilibiliHistoryVideo,
 	type BilibiliHotSearch,
 	type BilibiliMultipageVideo,
 	type BilibiliPlaylist,
+	type BilibiliRecommendationFeed,
 	BilibiliQrCodeLoginStatus,
 	type BilibiliSearchVideo,
 	type BilibiliSearchUser,
 	type BilibiliUserInfo,
+	type BilibiliUserRelation,
 	type BilibiliUserUploadedVideosResponse,
 	type BilibiliVideoDetails,
 } from '@/types/apis/bilibili'
@@ -56,6 +62,138 @@ const PASSPORT_UA =
  * B站 API 客户端类
  */
 export class BilibiliApi {
+	/**
+	 * 获取首页个性化推荐流
+	 */
+	getRecommendationFeed({
+		freshIndex = 1,
+		pageSize = 20,
+		signal,
+	}: {
+		freshIndex?: number
+		pageSize?: number
+		signal?: AbortSignal
+	} = {}): ResultAsync<BilibiliRecommendationFeed, BilibiliApiError> {
+		const params = getWbiEncodedParams({
+			feed_version: 'V2',
+			fresh_idx: freshIndex.toString(),
+			fresh_type: '4',
+			ps: pageSize.toString(),
+			web_location: '1430650',
+		})
+
+		return params.andThen((encodedParams) =>
+			bilibiliApiClient.get<BilibiliRecommendationFeed>({
+				endpoint: '/x/web-interface/wbi/index/top/feed/rcmd',
+				params: encodedParams,
+				signal,
+			}),
+		)
+	}
+
+	/**
+	 * 获取当前账号所关注 UP 主的视频动态。
+	 * 传入 hostMid 时只获取该 UP 主的视频动态。
+	 */
+	getDynamicFeed({
+		offset,
+		hostMid,
+		signal,
+	}: {
+		offset?: string
+		hostMid?: number
+		signal?: AbortSignal
+	} = {}): ResultAsync<BilibiliDynamicFeed, BilibiliApiError> {
+		const params: Record<string, string> = {
+			type: 'video',
+			platform: 'web',
+			timezone_offset: '-480',
+		}
+		if (offset) params.offset = offset
+
+		if (!hostMid) {
+			return bilibiliApiClient.get<BilibiliDynamicFeed>({
+				endpoint: '/x/polymer/web-dynamic/v1/feed/all',
+				params,
+				signal,
+			})
+		}
+
+		return getWbiEncodedParams({
+			...params,
+			host_mid: hostMid.toString(),
+		}).andThen((encodedParams) =>
+			bilibiliApiClient.get<BilibiliDynamicFeed>({
+				endpoint: '/x/polymer/web-dynamic/v1/feed/space',
+				params: encodedParams,
+				signal,
+			}),
+		)
+	}
+
+	/**
+	 * 检查关注的视频动态是否有更新。
+	 */
+	getDynamicFeedUpdate({ signal }: { signal?: AbortSignal } = {}): ResultAsync<
+		BilibiliDynamicFeedUpdate,
+		BilibiliApiError
+	> {
+		return bilibiliApiClient.get<BilibiliDynamicFeedUpdate>({
+			endpoint: '/x/polymer/web-dynamic/v1/feed/all/update',
+			params: {
+				type: 'video',
+				update_baseline: '0',
+				web_location: '333.1365',
+			},
+			signal,
+		})
+	}
+
+	/**
+	 * 获取当前账号的关注列表。
+	 */
+	getFollowingUsers({
+		mid,
+		page = 1,
+		pageSize = 20,
+		signal,
+	}: {
+		mid: number
+		page?: number
+		pageSize?: number
+		signal?: AbortSignal
+	}): ResultAsync<BilibiliFollowingList, BilibiliApiError> {
+		return bilibiliApiClient.get<BilibiliFollowingList>({
+			endpoint: '/x/relation/followings',
+			params: {
+				vmid: mid.toString(),
+				pn: page.toString(),
+				ps: pageSize.toString(),
+				order_type: 'attention',
+			},
+			signal,
+		})
+	}
+
+	/**
+	 * 点赞或取消点赞一条动态。
+	 */
+	modifyDynamicThumb({
+		dynamicId,
+		like,
+	}: {
+		dynamicId: string
+		like: boolean
+	}): ResultAsync<unknown, BilibiliApiError> {
+		return bilibiliApiClient.postJsonWithCsrf<unknown>({
+			endpoint: '/x/dynamic/feed/dyn/thumb',
+			payload: {
+				dyn_id_str: dynamicId,
+				up: like ? 1 : 2,
+			},
+		})
+	}
+
 	/**
 	 * 获取用户观看历史记录
 	 */
@@ -780,6 +918,9 @@ export class BilibiliApi {
 			add_media_ids: addToFavoriteIdsCombined,
 			del_media_ids: delInFavoriteIdsCombined,
 			type: '2',
+			platform: 'web',
+			ga: '1',
+			gaia_source: 'web_normal',
 		}
 		return bilibiliApiClient.postWithCsrf<BilibiliDealFavoriteForOneVideoResponse>(
 			{
@@ -872,6 +1013,48 @@ export class BilibiliApi {
 				params: encodedParams,
 				signal,
 			})
+		})
+	}
+
+	/**
+	 * 查询当前账号与目标 UP 主的关注关系
+	 */
+	getUserRelation({
+		mid,
+		signal,
+	}: {
+		mid: number
+		signal?: AbortSignal
+	}): ResultAsync<BilibiliUserRelation, BilibiliApiError> {
+		const params = getWbiEncodedParams({ mid: mid.toString() })
+		return params.andThen((encodedParams) =>
+			bilibiliApiClient
+				.get<{ relation: BilibiliUserRelation }>({
+					endpoint: '/x/space/wbi/acc/relation',
+					params: encodedParams,
+					signal,
+				})
+				.map((response) => response.relation),
+		)
+	}
+
+	/**
+	 * 关注或取消关注 UP 主
+	 */
+	modifyUserRelation({
+		mid,
+		follow,
+	}: {
+		mid: number
+		follow: boolean
+	}): ResultAsync<0, BilibiliApiError> {
+		return bilibiliApiClient.postWithCsrf<0>({
+			endpoint: '/x/relation/modify',
+			payload: {
+				fid: mid.toString(),
+				act: follow ? '1' : '2',
+				re_src: '14',
+			},
 		})
 	}
 
@@ -1196,6 +1379,25 @@ export class BilibiliApi {
 				params: encodedParams,
 				signal,
 			})
+		})
+	}
+
+	/** Downloads the raw JSON document for one subtitle track. */
+	getSubtitle({
+		subtitleUrl,
+		signal,
+	}: {
+		subtitleUrl: string
+		signal?: AbortSignal
+	}): ResultAsync<BilibiliSubtitleData, BilibiliApiError> {
+		const normalizedUrl = subtitleUrl.startsWith('//')
+			? `https:${subtitleUrl}`
+			: subtitleUrl.replace(/^http:/, 'https:')
+
+		return bilibiliApiClient.getRawJson<BilibiliSubtitleData>({
+			fullUrl: normalizedUrl,
+			skipCookie: true,
+			signal,
 		})
 	}
 

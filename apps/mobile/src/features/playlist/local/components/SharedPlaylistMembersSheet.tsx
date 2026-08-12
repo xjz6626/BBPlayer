@@ -1,10 +1,11 @@
 import type { TrueSheet } from '@lodev09/react-native-true-sheet'
 import { TrueSheet as TrueSheetComponent } from '@lodev09/react-native-true-sheet'
 import { forwardRef, useState } from 'react'
-import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native'
+import { ScrollView, StyleSheet, View } from 'react-native'
 import { Avatar, Text, useTheme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
+import ActivityIndicator from '@/components/common/ActivityIndicator'
 import { useSharedPlaylistAllMembers } from '@/hooks/queries/sharedPlaylistAllMembers'
 import { formatRelativeTime } from '@/utils/time'
 

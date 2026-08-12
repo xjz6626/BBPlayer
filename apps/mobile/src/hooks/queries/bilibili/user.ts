@@ -14,6 +14,7 @@ export const userQueryKeys = {
 		[...userQueryKeys.all, 'uploadedVideos', mid, keyword ?? ''] as const,
 	otherUserInfo: (mid: number) =>
 		[...userQueryKeys.all, 'otherUserInfo', mid] as const,
+	relation: (mid: number) => [...userQueryKeys.all, 'relation', mid] as const,
 }
 
 export const usePersonalInformation = () => {
@@ -112,5 +113,17 @@ export const useOtherUserInfo = (mid: number) => {
 			returnOrThrowAsync(bilibiliApi.getOtherUserInfo({ mid, signal })),
 		enabled,
 		staleTime: 24 * 60 * 1000, // 不需要刷新太频繁
+	})
+}
+
+export const useUserRelation = (mid?: number) => {
+	const hasCookie = useAppStore((state) => state.hasBilibiliCookie())
+
+	return useQuery({
+		queryKey: userQueryKeys.relation(mid ?? 0),
+		queryFn: ({ signal }) =>
+			returnOrThrowAsync(bilibiliApi.getUserRelation({ mid: mid!, signal })),
+		enabled: hasCookie && !!mid,
+		staleTime: 5 * 60 * 1000,
 	})
 }

@@ -5,6 +5,7 @@ import { createSkinTransformFailed } from '@/lib/errors/service'
 import log from '@/utils/log'
 
 import type { SkinAssetDeclaration } from './schema'
+import { resolveLibraryTabIconUrls } from './types'
 import type { AppSkin, InstalledSkin, SkinBootSplashAsset } from './types'
 
 const resource = (
@@ -64,35 +65,42 @@ const doTransform = ({
 }: TransformOptions): Result<InstalledSkin, ServiceError> => {
 	try {
 		const appSkin: AppSkin = {
-			skins: manifest.skins.map((skin) => ({
-				background: {
-					head: resource(skin.head_bg, mapping),
-				},
-				tabBar: {
-					background: resource(skin.tail_bg, mapping),
-					icons: {
-						home: {
-							default: resource(skin.tail_icon_main, mapping),
-							selected: resource(skin.tail_icon_selected_main, mapping),
-						},
-						library: {
-							default: resource(skin.tail_icon_channel, mapping),
-							selected: resource(skin.tail_icon_selected_channel, mapping),
-						},
-						settings: {
-							default: resource(skin.tail_icon_myself, mapping),
-							selected: resource(skin.tail_icon_selected_myself, mapping),
+			skins: manifest.skins.map((skin) => {
+				const libraryIcons = resolveLibraryTabIconUrls(skin)
+				return {
+					background: {
+						head: resource(skin.head_bg, mapping),
+					},
+					tabBar: {
+						background: resource(skin.tail_bg, mapping),
+						icons: {
+							dynamic: {
+								default: resource(skin.tail_icon_dynamic, mapping),
+								selected: resource(skin.tail_icon_selected_dynamic, mapping),
+							},
+							home: {
+								default: resource(skin.tail_icon_main, mapping),
+								selected: resource(skin.tail_icon_selected_main, mapping),
+							},
+							library: {
+								default: resource(libraryIcons.default, mapping),
+								selected: resource(libraryIcons.selected, mapping),
+							},
+							settings: {
+								default: resource(skin.tail_icon_myself, mapping),
+								selected: resource(skin.tail_icon_selected_myself, mapping),
+							},
 						},
 					},
-				},
-				colors: {
-					color: skin.color ?? null,
-					colorMode: skin.color_mode ?? null,
-					colorSecondPage: skin.color_second_page ?? null,
-					tailColor: skin.tail_color ?? null,
-					tailColorSelected: skin.tail_color_selected ?? null,
-				},
-			})),
+					colors: {
+						color: skin.color ?? null,
+						colorMode: skin.color_mode ?? null,
+						colorSecondPage: skin.color_second_page ?? null,
+						tailColor: skin.tail_color ?? null,
+						tailColorSelected: skin.tail_color_selected ?? null,
+					},
+				}
+			}),
 			bootSplash: {
 				items:
 					manifest.cards.length > 0

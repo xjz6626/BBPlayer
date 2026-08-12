@@ -5,25 +5,34 @@ import { StyleSheet, View } from 'react-native'
 import { Appbar, Divider, Text, useTheme } from 'react-native-paper'
 
 import ActivityIndicator from '@/components/common/ActivityIndicator'
+import ThemedRefreshControl, {
+	ThemedRefreshIndicator,
+} from '@/components/theme/ThemedRefreshControl'
 import { CommentItem } from '@/features/comments/components/CommentItem'
 import { useComments } from '@/hooks/queries/bilibili/comments'
+import useActiveSkin from '@/hooks/theme/useActiveSkin'
+import type { AppSkin } from '@/lib/theme/types'
 import type { BilibiliCommentItem } from '@/types/apis/bilibili'
 import type { ListRenderItemInfoWithExtraData } from '@/types/legendlist'
+
+interface CommentsExtraData {
+	bvid: string
+	onReplyPress: (item: BilibiliCommentItem) => void
+	skin: AppSkin | null
+}
 
 const renderItem = ({
 	item,
 	extraData,
-}: ListRenderItemInfoWithExtraData<
-	BilibiliCommentItem,
-	{ bvid: string; onReplyPress: (item: BilibiliCommentItem) => void }
->) => {
+}: ListRenderItemInfoWithExtraData<BilibiliCommentItem, CommentsExtraData>) => {
 	if (!extraData) throw new Error('Extradata 不存在')
-	const { bvid, onReplyPress } = extraData
+	const { bvid, onReplyPress, skin } = extraData
 	return (
 		<CommentItem
 			item={item}
 			bvid={bvid}
 			onReplyPress={onReplyPress}
+			skin={skin}
 		/>
 	)
 }
@@ -32,6 +41,7 @@ export default function CommentsPage() {
 	const { bvid } = useLocalSearchParams<{ bvid: string }>()
 	const theme = useTheme()
 	const router = useRouter()
+	const activeSkin = useActiveSkin()
 	const {
 		data,
 		fetchNextPage,
@@ -55,8 +65,8 @@ export default function CommentsPage() {
 	)
 
 	const extraData = useMemo(
-		() => ({ bvid, onReplyPress }),
-		[bvid, onReplyPress],
+		() => ({ bvid, onReplyPress, skin: activeSkin }),
+		[activeSkin, bvid, onReplyPress],
 	)
 
 	const keyExtractor = useCallback(
@@ -100,6 +110,9 @@ export default function CommentsPage() {
 						if (hasNextPage) void fetchNextPage()
 					}}
 					onEndReachedThreshold={0.5}
+					ListHeaderComponent={
+						<ThemedRefreshIndicator refreshing={isRefetching} />
+					}
 					ListFooterComponent={() =>
 						isFetchingNextPage ? (
 							<ActivityIndicator
@@ -108,8 +121,12 @@ export default function CommentsPage() {
 							/>
 						) : null
 					}
-					refreshing={isRefetching}
-					onRefresh={refetch}
+					refreshControl={
+						<ThemedRefreshControl
+							refreshing={isRefetching}
+							onRefresh={refetch}
+						/>
+					}
 					contentContainerStyle={{ paddingBottom: 20 }}
 					ItemSeparatorComponent={ItemSeparatorComponent}
 				/>

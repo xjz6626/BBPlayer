@@ -2,10 +2,13 @@ import type { LegendListRef } from '@legendapp/list/react-native'
 import { useImage } from 'expo-image'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { RefreshControl, StyleSheet, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
 import { Appbar, useTheme } from 'react-native-paper'
 
 import NowPlayingBar from '@/components/NowPlayingBar'
+import ThemedRefreshControl, {
+	ThemedRefreshListHeader,
+} from '@/components/theme/ThemedRefreshControl'
 import { FlashingTrackListItem } from '@/features/playlist/remote/components/FlashingTrackListItem'
 import { PlaylistError } from '@/features/playlist/remote/components/PlaylistError'
 import { PlaylistHeader } from '@/features/playlist/remote/components/PlaylistHeader'
@@ -25,46 +28,12 @@ import { useModalStore } from '@/hooks/stores/useModalStore'
 import { useDoubleTapScrollToTop } from '@/hooks/ui/useDoubleTapScrollToTop'
 import { usePlaylistBackgroundColor } from '@/hooks/ui/usePlaylistBackgroundColor'
 import { bv2av } from '@/lib/api/bilibili/utils'
-import type {
-	BilibiliMultipageVideo,
-	BilibiliVideoDetails,
-} from '@/types/apis/bilibili'
 import type { BilibiliTrack, Track } from '@/types/core/media'
 import type { ListRenderItemInfoWithExtraData } from '@/types/legendlist'
+import { mapBilibiliVideoPageToTrack } from '@/utils/bilibili-track'
 import * as Haptics from '@/utils/haptics'
 import { resolveBilibiliImageUrl } from '@/utils/imageUrl'
 import toast from '@/utils/toast'
-
-const mapApiItemToTrack = (
-	mp: BilibiliMultipageVideo,
-	video: BilibiliVideoDetails,
-): BilibiliTrack => {
-	return {
-		id: mp.cid,
-		uniqueKey: `bilibili::${video.bvid}::${mp.cid}`,
-		source: 'bilibili',
-		title: mp.part,
-		artist: {
-			id: video.owner.mid,
-			name: video.owner.name,
-			remoteId: video.owner.mid.toString(),
-			source: 'bilibili',
-			createdAt: new Date(video.pubdate),
-			updatedAt: new Date(video.pubdate),
-		},
-		coverUrl: video.pic,
-		duration: mp.duration,
-		createdAt: new Date(video.pubdate),
-		updatedAt: new Date(video.pubdate),
-		bilibiliMetadata: {
-			bvid: video.bvid,
-			cid: mp.cid,
-			isMultiPage: true,
-			videoIsValid: true,
-			mainTrackTitle: video.title,
-		},
-	}
-}
 
 export default function MultipagePage() {
 	const router = useRouter()
@@ -104,7 +73,9 @@ export default function MultipagePage() {
 		if (!rawMultipageData || !videoData) {
 			return []
 		}
-		return rawMultipageData.map((item) => mapApiItemToTrack(item, videoData))
+		return rawMultipageData.map((item) =>
+			mapBilibiliVideoPageToTrack(item, videoData),
+		)
 	}, [rawMultipageData, videoData])
 
 	const coverRef = useImage(resolveBilibiliImageUrl(videoData?.pic) ?? '', {
@@ -302,23 +273,25 @@ export default function MultipagePage() {
 					selection={selection}
 					showItemCover={false}
 					ListHeaderComponent={
-						<PlaylistHeader
-							cover={coverRef ?? undefined}
-							title={videoData.title}
-							subtitles={`${videoData.owner.name}\u2009•\u2009${tracksData.length}\u2009首歌曲`}
-							description={videoData.desc}
-							onClickMainButton={handleSync}
-							mainButtonIcon={'sync'}
-							linkedPlaylistId={linkedPlaylistId}
-							id={bv2av(bvid)}
-							primaryButtonColor={primaryButtonColor}
-							primaryButtonTextColor={primaryButtonTextColor}
-							secondaryButtonContainerColor={secondaryButtonContainerColor}
-							secondaryButtonIconColor={secondaryButtonIconColor}
-						/>
+						<ThemedRefreshListHeader refreshing={refreshing}>
+							<PlaylistHeader
+								cover={coverRef ?? undefined}
+								title={videoData.title}
+								subtitles={`${videoData.owner.name}\u2009•\u2009${tracksData.length}\u2009首歌曲`}
+								description={videoData.desc}
+								onClickMainButton={handleSync}
+								mainButtonIcon={'sync'}
+								linkedPlaylistId={linkedPlaylistId}
+								id={bv2av(bvid)}
+								primaryButtonColor={primaryButtonColor}
+								primaryButtonTextColor={primaryButtonTextColor}
+								secondaryButtonContainerColor={secondaryButtonContainerColor}
+								secondaryButtonIconColor={secondaryButtonIconColor}
+							/>
+						</ThemedRefreshListHeader>
 					}
 					refreshControl={
-						<RefreshControl
+						<ThemedRefreshControl
 							refreshing={refreshing}
 							onRefresh={async () => {
 								setRefreshing(true)

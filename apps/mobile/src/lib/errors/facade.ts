@@ -5,6 +5,7 @@ export type FacadeErrorType =
 	| 'SyncCollectionFailed'
 	| 'SyncMultiPageFailed'
 	| 'SyncFavoriteFailed'
+	| 'BatchPersistTracksFailed'
 	| 'fetchRemotePlaylistMetadataFailed'
 	| 'PlaylistDuplicateFailed'
 	| 'UpdateTrackLocalPlaylistsFailed'

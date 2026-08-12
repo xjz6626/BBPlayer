@@ -16,6 +16,12 @@ interface ModalState {
 		props: ModalPropsMap[K],
 		options?: ModalInstance['options'],
 	) => void
+	replace: <K extends ModalKey>(
+		currentKey: ModalKey,
+		key: K,
+		props: ModalPropsMap[K],
+		options?: ModalInstance['options'],
+	) => void
 	/**
 	 * 如果需要在 close 时进行跳转到其他页面的操作，**必须**将 navigation.navigate 调用放在 doAfterModalHostClosed 回调中执行
 	 * @param key modal 的 key
@@ -45,6 +51,28 @@ export const useModalStore = create<ModalState>()(
 			}))
 
 			router.navigate('/modal')
+		},
+
+		replace: (currentKey, key, props, options) => {
+			const hasCurrent = get().modals.some((modal) => modal.key === currentKey)
+			const exists = get().modals.some(
+				(modal) => modal.key === key && modal.key !== currentKey,
+			)
+
+			if (!hasCurrent) {
+				get().open(key, props, options)
+				return
+			}
+			if (exists) {
+				toast.error(`已经打开 ${key} 了`)
+				return
+			}
+
+			set((state) => ({
+				modals: state.modals.map((modal) =>
+					modal.key === currentKey ? { key, props, options } : modal,
+				),
+			}))
 		},
 
 		close: (key) => {

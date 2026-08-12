@@ -3,7 +3,7 @@
  *
  * 职责：
  * - 抹平 Bilibili 收藏集 / 装扮 API 的差异（N+1 请求、不同的响应结构）
- * - 统一产出经过 arktype 校验的 SkinAssetDeclaration
+ * - 统一产出经过关键字段校验的 SkinAssetDeclaration
  * - 不关心下载、本地路径、UI 渲染 —— 只做「API → Schema」的纯映射
  */
 import { errAsync, okAsync, ResultAsync } from 'neverthrow'
@@ -11,7 +11,10 @@ import { errAsync, okAsync, ResultAsync } from 'neverthrow'
 import { bilibiliApi } from '@/lib/api/bilibili/api'
 import type { GarbSkinSearchResult } from '@/lib/api/bilibili/garb'
 import { ServiceError } from '@/lib/errors'
-import { createSkinFetchFailed } from '@/lib/errors/service'
+import {
+	createSkinFetchFailed,
+	createSkinValidationFailed,
+} from '@/lib/errors/service'
 import type {
 	BilibiliGarbAssetBagItem,
 	BilibiliGarbCollectEntry,
@@ -29,7 +32,7 @@ import type {
 } from '@/types/apis/garb'
 import log from '@/utils/log'
 
-import { parseSkinAssetDeclaration, type SkinAssetDeclaration } from './schema'
+import type { SkinAssetDeclaration } from './schema'
 
 // ============================================================
 // 卡牌解析：API raw → SkinCardAsset
@@ -292,6 +295,36 @@ const emptyAssetDeclaration = (
 	thumbups: [],
 })
 
+/**
+ * 清单内容由本适配器逐字段构造，这里只校验下载和持久化
+ * 必须依赖的关键标识。保持校验与 schema 的运行时实现解耦，
+ * 避免 Metro/Hermes 在延迟回调中拿到 undefined 的模块命名空间。
+ */
+const finalizeAssetDeclaration = (
+	table: SkinAssetDeclaration,
+): ResultAsync<SkinAssetDeclaration, ServiceError> => {
+	if (!table.name.trim()) {
+		return errAsync(createSkinValidationFailed('装扮名称为空'))
+	}
+
+	if (table.type === 'collection' && (!table.act_id || !table.lottery_id)) {
+		return errAsync(
+			createSkinValidationFailed('收藏集资产清单缺少 act_id 或 lottery_id'),
+		)
+	}
+
+	if (table.type === 'suit' && !table.item_id) {
+		return errAsync(createSkinValidationFailed('主题装扮资产清单缺少 item_id'))
+	}
+
+	log.debug(`[adapter] ${table.type} declaration built`, {
+		cards: table.cards.length,
+		skins: table.skins.length,
+		thumbups: table.thumbups.length,
+	})
+	return okAsync(table)
+}
+
 // ============================================================
 // 主构建器
 // ============================================================
@@ -337,14 +370,7 @@ const buildCollectionAssetDeclaration = (
 			)
 
 			return ResultAsync.combine(rewards).andThen(() => {
-				const result = parseSkinAssetDeclaration(table)
-				if (result.isErr()) return errAsync(result.error)
-				log.debug('[adapter] collection declaration built', {
-					cards: result.value.cards.length,
-					skins: result.value.skins.length,
-					thumbups: result.value.thumbups.length,
-				})
-				return okAsync(result.value)
+				return finalizeAssetDeclaration(table)
 			})
 		})
 }
@@ -506,14 +532,7 @@ const buildSuitAssetDeclaration = (
 				})
 			}
 
-			const result = parseSkinAssetDeclaration(table)
-			if (result.isErr()) return errAsync(result.error)
-			log.debug('[adapter] suit declaration built', {
-				cards: result.value.cards.length,
-				skins: result.value.skins.length,
-				thumbups: result.value.thumbups.length,
-			})
-			return okAsync(result.value)
+			return finalizeAssetDeclaration(table)
 		})
 }
 
@@ -523,7 +542,7 @@ const buildSuitAssetDeclaration = (
 
 /**
  * 根据搜索结果获取统一的资产声明。
- * 内部根据 kind 分发到收藏集 / 装扮构建器，统一返回经过 arktype 校验的 SkinAssetDeclaration。
+ * 内部根据 kind 分发到收藏集 / 装扮构建器，统一返回经过关键字段校验的 SkinAssetDeclaration。
  */
 export const fetchGarbSkinAssetDeclaration = (
 	item: GarbSkinSearchResult,

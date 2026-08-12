@@ -5,21 +5,35 @@ import { StyleSheet, View } from 'react-native'
 import { Appbar, Divider, Text, useTheme } from 'react-native-paper'
 
 import ActivityIndicator from '@/components/common/ActivityIndicator'
+import ThemedRefreshControl, {
+	ThemedRefreshListHeader,
+} from '@/components/theme/ThemedRefreshControl'
 import { CommentItem } from '@/features/comments/components/CommentItem'
 import { useReplyComments } from '@/hooks/queries/bilibili/comments'
+import useActiveSkin from '@/hooks/theme/useActiveSkin'
+import type { AppSkin } from '@/lib/theme/types'
 import type { BilibiliCommentItem } from '@/types/apis/bilibili'
 import type { ListRenderItemInfoWithExtraData } from '@/types/legendlist'
+
+interface ReplyCommentsExtraData {
+	bvid: string
+	skin: AppSkin | null
+}
 
 const renderItem = ({
 	item,
 	extraData,
-}: ListRenderItemInfoWithExtraData<BilibiliCommentItem, { bvid: string }>) => {
+}: ListRenderItemInfoWithExtraData<
+	BilibiliCommentItem,
+	ReplyCommentsExtraData
+>) => {
 	if (!extraData) throw new Error('Extradata 不存在')
-	const { bvid } = extraData
+	const { bvid, skin } = extraData
 	return (
 		<CommentItem
 			item={item}
 			bvid={bvid}
+			skin={skin}
 		/>
 	)
 }
@@ -27,6 +41,7 @@ const renderItem = ({
 export default function ReplyCommentsPage() {
 	const { bvid, rpid } = useLocalSearchParams<{ bvid: string; rpid: string }>()
 	const theme = useTheme()
+	const activeSkin = useActiveSkin()
 	const {
 		data,
 		fetchNextPage,
@@ -41,7 +56,10 @@ export default function ReplyCommentsPage() {
 	const replies = data?.pages.flatMap((page) => page.replies ?? []) ?? []
 	const rootComment = data?.pages[0]?.root
 
-	const extraData = useMemo(() => ({ bvid }), [bvid])
+	const extraData = useMemo(
+		() => ({ bvid, skin: activeSkin }),
+		[activeSkin, bvid],
+	)
 
 	const keyExtractor = useCallback(
 		(item: BilibiliCommentItem) => item.rpid.toString(),
@@ -88,20 +106,23 @@ export default function ReplyCommentsPage() {
 					extraData={extraData}
 					keyExtractor={keyExtractor}
 					recycleItems
-					ListHeaderComponent={() =>
-						rootComment ? (
-							<View
-								style={{
-									borderBottomWidth: 1,
-									borderBottomColor: theme.colors.outlineVariant,
-								}}
-							>
-								<CommentItem
-									item={rootComment}
-									bvid={bvid}
-								/>
-							</View>
-						) : null
+					ListHeaderComponent={
+						<ThemedRefreshListHeader refreshing={isRefetching}>
+							{rootComment ? (
+								<View
+									style={{
+										borderBottomWidth: 1,
+										borderBottomColor: theme.colors.outlineVariant,
+									}}
+								>
+									<CommentItem
+										item={rootComment}
+										bvid={bvid}
+										skin={activeSkin}
+									/>
+								</View>
+							) : null}
+						</ThemedRefreshListHeader>
 					}
 					renderItem={renderItem}
 					onEndReached={() => {
@@ -117,8 +138,12 @@ export default function ReplyCommentsPage() {
 						) : null
 					}
 					ItemSeparatorComponent={divider}
-					refreshing={isRefetching}
-					onRefresh={refetch}
+					refreshControl={
+						<ThemedRefreshControl
+							refreshing={isRefetching}
+							onRefresh={refetch}
+						/>
+					}
 					contentContainerStyle={{ paddingBottom: 20 }}
 				/>
 			)}

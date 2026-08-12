@@ -7,6 +7,8 @@ import { useModalStore } from '@/hooks/stores/useModalStore'
 export interface AlertButton {
 	text: string
 	onPress?: () => void
+	/** 由回调原地替换当前弹窗时设为 false，避免 ModalHost 先退出再进入。 */
+	closeOnPress?: boolean
 }
 
 export interface AlertOptions {
@@ -43,6 +45,10 @@ export default function AlertModal({
 			}
 			case 1: {
 				const handlePress = () => {
+					if (button.closeOnPress === false) {
+						button.onPress?.()
+						return
+					}
 					close('Alert')
 					useModalStore.getState().doAfterModalHostClosed(() => {
 						button.onPress?.()

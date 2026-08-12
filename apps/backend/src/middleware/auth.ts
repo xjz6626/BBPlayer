@@ -1,7 +1,7 @@
 import { createMiddleware } from 'hono/factory'
 import { verify } from 'hono/jwt'
 
-import type { JwtTokenPayload } from '../types'
+import type { JwtTokenPayload, WorkerBindings } from '../types'
 
 /**
  * JWT 鉴权中间件。
@@ -9,7 +9,7 @@ import type { JwtTokenPayload } from '../types'
  * 路由层通过 `c.var.jwtPayload.sub` 读取 BBPlayer account id。
  */
 export const authMiddleware = createMiddleware<{
-	Bindings: Env
+	Bindings: WorkerBindings
 	Variables: { jwtPayload: JwtTokenPayload }
 }>(async (c, next) => {
 	const authHeader = c.req.header('Authorization')

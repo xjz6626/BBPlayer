@@ -1,11 +1,13 @@
 package expo.modules.orpheus.bilibili
 
+import android.content.Context
 import android.util.Log
 
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 object BilibiliRepository {
     val TAG = "Orpheus/BilibiliRepo"
@@ -17,6 +19,11 @@ object BilibiliRepository {
     private var cachedImgKey: String? = null
     private var cachedSubKey: String? = null
     private var cachedDateStr: String? = null
+    private val resolutionLocks = ConcurrentHashMap<String, Any>()
+
+    fun initialize(context: Context) {
+        BilibiliPlaybackCache.initialize(context)
+    }
 
     private fun getTodayDateStr(): String {
         val sdf = SimpleDateFormat("yyyyMMdd", Locale.getDefault())
@@ -29,6 +36,13 @@ object BilibiliRepository {
 
         if (cachedImgKey != null && cachedSubKey != null && today == cachedDateStr) {
             return cachedImgKey!! to cachedSubKey!!
+        }
+
+        BilibiliPlaybackCache.getWbiKeys(today)?.let { (imgKey, subKey) ->
+            cachedImgKey = imgKey
+            cachedSubKey = subKey
+            cachedDateStr = today
+            return imgKey to subKey
         }
 
         val response = api.getNavInfo().execute()
@@ -45,6 +59,7 @@ object BilibiliRepository {
         cachedImgKey = imgKey
         cachedSubKey = subKey
         cachedDateStr = today
+        BilibiliPlaybackCache.putWbiKeys(today, imgKey, subKey)
 
         return imgKey to subKey
     }
@@ -60,13 +75,61 @@ object BilibiliRepository {
         enableHiRes: Boolean,
         cookie: String?
     ): Pair<String, VolumeData?> {
-        var cidInternal = cid
-        val (imgKey, subKey) = getWbiKeys()
-        if (cidInternal === null) {
+        val lockKey = "$bvid:${cid ?: "first"}:$audioQuality:$enableDolby:$enableHiRes:${cookie.orEmpty().hashCode()}"
+        val resolutionLock = resolutionLocks.computeIfAbsent(lockKey) { Any() }
+        return synchronized(resolutionLock) {
+            resolveAudioUrlLocked(
+                bvid,
+                cid,
+                audioQuality,
+                enableDolby,
+                enableHiRes,
+                cookie
+            )
+        }
+    }
+
+    private fun resolveAudioUrlLocked(
+        bvid: String,
+        cid: Long?,
+        audioQuality: Int,
+        enableDolby: Boolean,
+        enableHiRes: Boolean,
+        cookie: String?
+    ): Pair<String, VolumeData?> {
+        BilibiliPlaybackCache.getResolution(
+            bvid,
+            cid,
+            audioQuality,
+            enableDolby,
+            enableHiRes,
+            cookie
+        )?.let { cached ->
+            Log.d(TAG, "resolved audio URL cache hit: bvid=$bvid, cid=${cached.cid}")
+            return cached.url to cached.volume
+        }
+
+        var cidInternal = cid ?: BilibiliPlaybackCache.getCid(bvid)
+        if (cidInternal != null && cid == null) {
+            BilibiliPlaybackCache.getResolution(
+                bvid,
+                cidInternal,
+                audioQuality,
+                enableDolby,
+                enableHiRes,
+                cookie
+            )?.let { cached ->
+                Log.d(TAG, "resolved audio URL cache hit by cached cid: bvid=$bvid, cid=$cidInternal")
+                return cached.url to cached.volume
+            }
+        }
+        if (cidInternal == null) {
             cidInternal = getFirstCid(bvid, cookie)
         }
 
-        Log.e(TAG, "resolve url: bvid: $bvid, cid: $cid, enableDolby: ")
+        val (imgKey, subKey) = getWbiKeys()
+
+        Log.d(TAG, "resolve url: bvid=$bvid, cid=$cidInternal, enableDolby=$enableDolby, enableHiRes=$enableHiRes")
 
         val rawParams = mapOf(
             "bvid" to bvid,
@@ -102,35 +165,36 @@ object BilibiliRepository {
         val durl = data.durl
         val volume = data.volume
 
-        if (dash == null) {
+        val resolvedUrl = if (dash == null) {
             if (durl.isNullOrEmpty()) {
                 throw IOException("AudioStreamError: 请求到的流数据不包含 dash 或 durl 任一字段")
             }
-            return durl[0].url to volume
-        }
-
-        if (enableDolby && dash.dolby?.audio?.isNotEmpty() == true) {
+            durl[0].url
+        } else if (enableDolby && dash.dolby?.audio?.isNotEmpty() == true) {
             Log.d(TAG, "select dolby source")
-            return dash.dolby.audio[0].baseUrl to volume
-        }
-
-        if (enableHiRes && dash.flac?.audio != null) {
+            dash.dolby.audio[0].baseUrl
+        } else if (enableHiRes && dash.flac?.audio != null) {
             Log.d(TAG, "select hires source")
-            return dash.flac.audio.baseUrl to volume
-        }
-
-        if (dash.audio.isNullOrEmpty()) {
-            throw IOException("AudioStreamError: 未找到有效的音频流数据")
-        }
-
-        val targetAudio = dash.audio.find { it.id == audioQuality }
-
-        if (targetAudio != null) {
-            return targetAudio.baseUrl to volume
+            dash.flac.audio.baseUrl
         } else {
-            val highestQualityAudio = dash.audio[0]
-            return highestQualityAudio.baseUrl to volume
+            if (dash.audio.isNullOrEmpty()) {
+                throw IOException("AudioStreamError: 未找到有效的音频流数据")
+            }
+            dash.audio.find { it.id == audioQuality }?.baseUrl ?: dash.audio[0].baseUrl
         }
+
+        BilibiliPlaybackCache.putResolution(
+            bvid = bvid,
+            requestedCid = cid,
+            resolvedCid = cidInternal,
+            audioQuality = audioQuality,
+            enableDolby = enableDolby,
+            enableHiRes = enableHiRes,
+            cookie = cookie,
+            url = resolvedUrl,
+            volume = volume
+        )
+        return resolvedUrl to volume
     }
 
     fun getFirstCid(bvid: String, cookie: String?): Long {
@@ -151,6 +215,9 @@ object BilibiliRepository {
             throw IOException("Bilibili API Logic Error: code=0 msg=${apiResponse.message} but data is missing")
         }
 
-        return apiResponse.data[0].cid
+        val cid = apiResponse.data.firstOrNull()?.cid
+            ?: throw IOException("Bilibili API Logic Error: page list is empty for bvid=$bvid")
+        BilibiliPlaybackCache.putCid(bvid, cid)
+        return cid
     }
 }

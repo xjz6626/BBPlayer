@@ -1,3 +1,4 @@
+import type { Track as OrpheusTrack } from '@bbplayer/orpheus'
 import type { ExpoSQLiteDatabase } from 'drizzle-orm/expo-sqlite'
 import { ResultAsync, errAsync } from 'neverthrow'
 
@@ -6,13 +7,20 @@ import defaultDb from '@/lib/db/db'
 import * as schema from '@/lib/db/schema'
 import { createFacadeError } from '@/lib/errors/facade'
 import { createValidationError } from '@/lib/errors/service'
-import { artistService as artistServiceInstance, type ArtistService } from '@/lib/services/artistService'
+import {
+	artistService as artistServiceInstance,
+	type ArtistService,
+} from '@/lib/services/artistService'
 import {
 	playlistService as playlistServiceInstance,
 	type PlaylistService,
 } from '@/lib/services/playlistService'
-import { trackService as trackServiceInstance, type TrackService } from '@/lib/services/trackService'
+import {
+	trackService as trackServiceInstance,
+	type TrackService,
+} from '@/lib/services/trackService'
 import { playlistSyncWorker } from '@/lib/workers/PlaylistSyncWorker'
+import type { BilibiliTrack } from '@/types/core/media'
 import type { CreateArtistPayload } from '@/types/services/artist'
 import type {
 	ReorderLocalPlaylistTrackPayload,
@@ -24,6 +32,52 @@ import log from '@/utils/log'
 type BbplayerApiClient = typeof bbplayerApiInstance
 
 const logger = log.extend('Facade')
+
+const queueTrackToBilibiliPayload = (
+	track: OrpheusTrack,
+): CreateTrackPayload | null => {
+	const [source, keyBvid, keyCid] = track.id.split('::')
+	if (source !== 'bilibili') return null
+
+	let urlBvid: string | null = null
+	let urlCid: string | null = null
+	try {
+		const url = new URL(track.url)
+		urlBvid = url.searchParams.get('bvid')
+		urlCid = url.searchParams.get('cid')
+	} catch {
+		// The unique key still contains enough information for Bilibili tracks.
+	}
+
+	const bvid = keyBvid || urlBvid
+	if (!bvid) return null
+
+	const isMultiPage = keyCid !== undefined
+	const rawCid = keyCid ?? urlCid
+	const parsedCid = rawCid ? Number(rawCid) : undefined
+	const cid =
+		parsedCid !== undefined && Number.isFinite(parsedCid) && parsedCid > 0
+			? parsedCid
+			: undefined
+	if (isMultiPage && cid === undefined) return null
+	const duration = Number.isFinite(track.duration)
+		? Math.max(0, Math.round(track.duration ?? 0))
+		: 0
+
+	return {
+		title: track.title?.trim() || bvid,
+		source: 'bilibili',
+		artistId: null,
+		coverUrl: track.artwork ?? null,
+		duration,
+		bilibiliMetadata: {
+			bvid,
+			cid,
+			isMultiPage,
+			videoIsValid: true,
+		},
+	}
+}
 
 export class PlaylistFacade {
 	constructor(
@@ -407,14 +461,112 @@ export class PlaylistFacade {
 	}
 
 	/**
+	 * 将已经解析完成的 B 站歌曲原子地保存为一个新的本地播放列表。
+	 */
+	public async createPlaylistFromBilibiliTracks(params: {
+		title: string
+		description?: string | null
+		tracks: BilibiliTrack[]
+	}) {
+		const title = params.title.trim()
+		if (!title) return errAsync(createValidationError('播放列表名称不能为空'))
+		if (params.tracks.length === 0) {
+			return errAsync(createValidationError('没有可以导入的歌曲'))
+		}
+
+		return ResultAsync.fromPromise(
+			this.db.transaction(async (tx) => {
+				const playlistSvc = this.playlistService.withDB(tx)
+				const trackSvc = this.trackService.withDB(tx)
+				const artistSvc = this.artistService.withDB(tx)
+
+				const uniqueArtists = new Map<string, CreateArtistPayload>()
+				for (const track of params.tracks) {
+					if (!track.artist?.remoteId) continue
+					uniqueArtists.set(track.artist.remoteId, {
+						name: track.artist.name,
+						source: 'bilibili',
+						remoteId: track.artist.remoteId,
+						avatarUrl: track.artist.avatarUrl,
+						signature: track.artist.signature,
+					})
+				}
+
+				const artistsResult = await artistSvc.findOrCreateManyRemoteArtists(
+					Array.from(uniqueArtists.values()),
+				)
+				if (artistsResult.isErr()) throw artistsResult.error
+
+				const trackPayloads: CreateTrackPayload[] = params.tracks.map(
+					(track) => ({
+						title: track.title,
+						source: 'bilibili',
+						artistId: track.artist?.remoteId
+							? artistsResult.value.get(track.artist.remoteId)?.id
+							: undefined,
+						coverUrl: track.coverUrl,
+						duration: track.duration,
+						bilibiliMetadata: {
+							bvid: track.bilibiliMetadata.bvid,
+							cid: track.bilibiliMetadata.cid,
+							isMultiPage: track.bilibiliMetadata.isMultiPage,
+							videoIsValid: true,
+							mainTrackTitle: track.bilibiliMetadata.mainTrackTitle,
+						},
+					}),
+				)
+
+				const tracksResult = await trackSvc.findOrCreateManyTracks(
+					trackPayloads,
+					'bilibili',
+				)
+				if (tracksResult.isErr()) throw tracksResult.error
+
+				const trackIds = params.tracks.map((track) => {
+					const trackId = tracksResult.value.get(track.uniqueKey)
+					if (!trackId) {
+						throw createValidationError(`歌曲入库失败：${track.title}`)
+					}
+					return trackId
+				})
+
+				const playlistResult = await playlistSvc.createPlaylist({
+					title,
+					description: params.description,
+					coverUrl: params.tracks[0]?.coverUrl,
+					type: 'local',
+					authorId: null,
+					remoteSyncId: null,
+				})
+				if (playlistResult.isErr()) throw playlistResult.error
+
+				const addResult = await playlistSvc.addManyTracksToLocalPlaylist(
+					playlistResult.value.id,
+					trackIds,
+				)
+				if (addResult.isErr()) throw addResult.error
+
+				return {
+					playlistId: playlistResult.value.id,
+					savedCount: addResult.value.length,
+				}
+			}),
+			(error) =>
+				createFacadeError('PlaylistCreateFailed', '从文本创建播放列表失败', {
+					cause: error,
+				}),
+		)
+	}
+
+	/**
 	 * 将播放队列保存为新的播放列表
 	 * @param name 播放列表名称
-	 * @param uniqueKeys 队列中的 track uniqueKeys
+	 * @param queueTracks 原生播放队列中的 tracks
 	 */
-	public async saveQueueAsPlaylist(name: string, uniqueKeys: string[]) {
+	public async saveQueueAsPlaylist(name: string, queueTracks: OrpheusTrack[]) {
 		logger.info('开始将队列保存为播放列表', {
 			name,
-			trackCount: uniqueKeys.length,
+			trackCount: queueTracks.length,
 		})
 		return ResultAsync.fromPromise(
 			this.db.transaction(async (tx) => {
@@ -431,25 +583,55 @@ export class PlaylistFacade {
 				if (playlistRes.isErr()) throw playlistRes.error
 				const playlist = playlistRes.value
 
-				// 2. 验证所有 tracks 在本地存在，并获取 ID
-				const distinctKeys = Array.from(new Set(uniqueKeys))
+				// 2. 查询本地 tracks，并使用原生队列元数据修复历史遗留的未入库歌曲
+				const distinctTracks = Array.from(
+					new Map(queueTracks.map((track) => [track.id, track])).values(),
+				)
+				const distinctKeys = distinctTracks.map((track) => track.id)
 
 				const findRes = await trackSvc.findTrackIdsByUniqueKeys(distinctKeys)
 				if (findRes.isErr()) throw findRes.error
 				const foundMap = findRes.value
 
 				const trackIds: number[] = []
-				for (const key of distinctKeys) {
-					const id = foundMap.get(key)
-					if (id === undefined) {
-						// 理论上不应该发生，因为进入播放队列的歌曲必须在本地 DB 有记录
-						logger.error(`保存队列时发现缺失的 track: ${key}`)
-						throw createFacadeError(
-							'PlaylistCreateFailed',
-							`无法保存队列，发现未入库的歌曲 (ID: ${key})，请向开发者反馈`,
-						)
+				const skippedKeys: string[] = []
+				let recoveredCount = 0
+				for (const queueTrack of distinctTracks) {
+					const existingId = foundMap.get(queueTrack.id)
+					if (existingId !== undefined) {
+						trackIds.push(existingId)
+						continue
 					}
-					trackIds.push(id)
+
+					const payload = queueTrackToBilibiliPayload(queueTrack)
+					if (!payload) {
+						logger.warning('无法从播放队列恢复未入库歌曲', {
+							uniqueKey: queueTrack.id,
+						})
+						skippedKeys.push(queueTrack.id)
+						continue
+					}
+
+					// oxlint-disable-next-line no-await-in-loop
+					const repairResult = await trackSvc.findOrCreateTrack(payload)
+					if (
+						repairResult.isErr() ||
+						repairResult.value.uniqueKey !== queueTrack.id
+					) {
+						logger.warning('恢复播放队列中的未入库歌曲失败', {
+							uniqueKey: queueTrack.id,
+							error: repairResult.isErr() ? repairResult.error : undefined,
+						})
+						skippedKeys.push(queueTrack.id)
+						continue
+					}
+
+					trackIds.push(repairResult.value.id)
+					recoveredCount += 1
+				}
+
+				if (trackIds.length === 0) {
+					throw createValidationError('队列中没有可以保存的歌曲')
 				}
 
 				// 3. 批量添加到播放列表
@@ -461,7 +643,13 @@ export class PlaylistFacade {
 					if (addRes.isErr()) throw addRes.error
 				}
 
-				return playlist.id
+				return {
+					playlistId: playlist.id,
+					savedCount: trackIds.length,
+					recoveredCount,
+					skippedCount: skippedKeys.length,
+					skippedKeys,
+				}
 			}),
 			(e) =>
 				createFacadeError('PlaylistCreateFailed', '保存队列为播放列表失败', {

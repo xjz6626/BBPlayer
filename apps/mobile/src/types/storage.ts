@@ -27,6 +27,7 @@ export interface AppStorageSchema {
 	'shared-playlist-members': string
 	'skin-storage': string
 	boot_splash_preload: string
+	'weekly-vocal-rank-cache': string
 }
 
 export type StorageKey = keyof AppStorageSchema

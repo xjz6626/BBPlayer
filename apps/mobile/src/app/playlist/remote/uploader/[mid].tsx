@@ -1,7 +1,7 @@
 import { useImage } from 'expo-image'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useMemo, useState } from 'react'
-import { RefreshControl, StyleSheet, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
 import { Appbar, Text, useTheme } from 'react-native-paper'
 import { Searchbar as SearchBar } from 'react-native-paper'
 import Animated, {
@@ -12,6 +12,9 @@ import Animated, {
 
 import Button from '@/components/common/Button'
 import NowPlayingBar from '@/components/NowPlayingBar'
+import ThemedRefreshControl, {
+	ThemedRefreshListHeader,
+} from '@/components/theme/ThemedRefreshControl'
 import { PlaylistError } from '@/features/playlist/remote/components/PlaylistError'
 import { PlaylistHeader } from '@/features/playlist/remote/components/PlaylistHeader'
 import { TrackList } from '@/features/playlist/remote/components/RemoteTrackList'
@@ -287,22 +290,24 @@ export default function UploaderPage() {
 					trackMenuItems={trackMenuItems}
 					selection={selection}
 					ListHeaderComponent={
-						<PlaylistHeader
-							cover={coverRef ?? undefined}
-							title={uploaderUserInfo.name}
-							subtitles={`${uploadedVideos?.pages[0].page.count ?? 0}\u2009首歌曲`}
-							description={uploaderUserInfo.sign}
-							onClickMainButton={undefined}
-							mainButtonIcon={'sync'}
-							id={Number(mid)}
-							primaryButtonColor={primaryButtonColor}
-							primaryButtonTextColor={primaryButtonTextColor}
-							secondaryButtonContainerColor={secondaryButtonContainerColor}
-							secondaryButtonIconColor={secondaryButtonIconColor}
-						/>
+						<ThemedRefreshListHeader refreshing={refreshing}>
+							<PlaylistHeader
+								cover={coverRef ?? undefined}
+								title={uploaderUserInfo.name}
+								subtitles={`${uploadedVideos?.pages[0].page.count ?? 0}\u2009首歌曲`}
+								description={uploaderUserInfo.sign}
+								onClickMainButton={undefined}
+								mainButtonIcon={'sync'}
+								id={Number(mid)}
+								primaryButtonColor={primaryButtonColor}
+								primaryButtonTextColor={primaryButtonTextColor}
+								secondaryButtonContainerColor={secondaryButtonContainerColor}
+								secondaryButtonIconColor={secondaryButtonIconColor}
+							/>
+						</ThemedRefreshListHeader>
 					}
 					refreshControl={
-						<RefreshControl
+						<ThemedRefreshControl
 							refreshing={refreshing}
 							onRefresh={async () => {
 								setRefreshing(true)

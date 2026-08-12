@@ -42,6 +42,7 @@ import expo.modules.orpheus.util.DownloadUtil
 import expo.modules.orpheus.util.ExportOptions
 import expo.modules.orpheus.util.GeneralStorage
 import expo.modules.orpheus.util.LoudnessStorage
+import expo.modules.orpheus.util.TrackAudioEffectStorage
 import expo.modules.orpheus.util.runExportDownloads
 import expo.modules.orpheus.util.toJsMap
 import expo.modules.orpheus.util.toMediaItem
@@ -68,6 +69,10 @@ class ExpoOrpheusModule : Module() {
 
     private val spectrumManager = SpectrumManager()
     private var tempBuffer: FloatArray? = null
+    private var spectrumCaptureRequested = false
+    private var isAppForeground = true
+    @Volatile
+    private var isModuleDestroyed = false
 
     private val ioScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -81,6 +86,58 @@ class ExpoOrpheusModule : Module() {
     private var lastMediaId: String? = null
 
     val json = Json { ignoreUnknownKeys = true }
+
+    private var boundService: OrpheusMusicService? = null
+
+    private val statusChangeListener =
+        object : expo.modules.orpheus.manager.StatusBarLyricsManager.StatusChangeListener {
+            override fun onStatusChanged() {
+                sendEvent("onStatusBarLyricsStatusChanged", emptyMap<String, Any>())
+            }
+        }
+
+    private val trackEventListener = object : OrpheusMusicService.TrackEventListener {
+        override fun onTrackStarted(trackId: String, reason: Int) {
+            sendEvent(
+                "onTrackStarted", mapOf(
+                    "trackId" to trackId,
+                    "reason" to reason
+                )
+            )
+        }
+
+        override fun onTrackFinished(
+            trackId: String,
+            finalPosition: Double,
+            duration: Double
+        ) {
+            sendEvent(
+                "onTrackFinished", mapOf(
+                    "trackId" to trackId,
+                    "finalPosition" to finalPosition,
+                    "duration" to duration
+                )
+            )
+        }
+    }
+
+    private val lyricEventListener = object : OrpheusMusicService.LyricEventListener {
+        override fun onLyricCleared(trackId: String) {
+            sendEvent(
+                "onRequestClearLyrics", mapOf(
+                    "trackId" to trackId
+                )
+            )
+        }
+    }
+
+    private val serviceReadyListener: (OrpheusMusicService) -> Unit = { service ->
+        mainHandler.post {
+            if (!isModuleDestroyed) {
+                bindToService(service)
+            }
+        }
+    }
 
     private val playerListener = object : Player.Listener {
 
@@ -133,17 +190,12 @@ class ExpoOrpheusModule : Module() {
                 )
             )
 
-            if (isPlaying) {
-                player?.audioSessionId?.let { sessionId ->
-                    if (sessionId != C.AUDIO_SESSION_ID_UNSET) {
-                        spectrumManager.start(sessionId)
-                    }
-                }
-            } else {
-                spectrumManager.stop()
-            }
-
+            updateSpectrumManagerState()
             updateProgressRunnerState()
+        }
+
+        override fun onAudioSessionIdChanged(audioSessionId: Int) {
+            updateSpectrumManagerState()
         }
 
         /**
@@ -200,9 +252,11 @@ class ExpoOrpheusModule : Module() {
 
         OnCreate {
             val context = appContext.reactContext ?: return@OnCreate
+            isModuleDestroyed = false
             cachedAppContext = context.applicationContext
             GeneralStorage.initialize(context)
             LoudnessStorage.initialize(context)
+            TrackAudioEffectStorage.initialize(context)
             expo.modules.orpheus.manager.CachedUriManager.initialize(context)
             val sessionToken = SessionToken(
                 context,
@@ -212,72 +266,25 @@ class ExpoOrpheusModule : Module() {
                 .setApplicationLooper(Looper.getMainLooper()).buildAsync()
 
 
-            OrpheusMusicService.addOnServiceReadyListener { service ->
-                mainHandler.post {
-                    if (this@ExpoOrpheusModule.player != service.player) {
-                        this@ExpoOrpheusModule.player?.removeListener(playerListener)
-                        this@ExpoOrpheusModule.player = service.player
-                        this@ExpoOrpheusModule.player?.addListener(playerListener)
-                    }
-
-                    service.statusBarLyricsManager.setStatusChangeListener(object :
-                        expo.modules.orpheus.manager.StatusBarLyricsManager.StatusChangeListener {
-                        override fun onStatusChanged() {
-                            sendEvent("onStatusBarLyricsStatusChanged", emptyMap<String, Any>())
-                        }
-                    })
-
-                    service.addTrackEventListener(object : OrpheusMusicService.TrackEventListener {
-                        override fun onTrackStarted(trackId: String, reason: Int) {
-                            sendEvent(
-                                "onTrackStarted", mapOf(
-                                    "trackId" to trackId,
-                                    "reason" to reason
-                                )
-                            )
-                        }
-
-                        override fun onTrackFinished(
-                            trackId: String,
-                            finalPosition: Double,
-                            duration: Double
-                        ) {
-                            sendEvent(
-                                "onTrackFinished", mapOf(
-                                    "trackId" to trackId,
-                                    "finalPosition" to finalPosition,
-                                    "duration" to duration
-                                )
-                            )
-                        }
-                    })
-
-                    service.addLyricEventListener(object : OrpheusMusicService.LyricEventListener {
-                        override fun onLyricCleared(trackId: String) {
-                            sendEvent(
-                                "onRequestClearLyrics", mapOf(
-                                    "trackId" to trackId
-                                )
-                            )
-                        }
-                    })
-                }
-            }
+            OrpheusMusicService.addOnServiceReadyListener(serviceReadyListener)
 
             downloadManager = DownloadUtil.getDownloadManager(context)
             downloadManager?.addListener(downloadListener)
         }
 
         OnDestroy {
+            isModuleDestroyed = true
+            OrpheusMusicService.removeOnServiceReadyListener(serviceReadyListener)
             mainHandler.post {
                 mainHandler.removeCallbacks(progressSendEventRunnable)
                 mainHandler.removeCallbacks(progressSaveRunnable)
                 mainHandler.removeCallbacks(downloadProgressRunnable)
                 controllerFuture?.let { MediaController.releaseFuture(it) }
                 downloadManager?.removeListener(downloadListener)
+                unbindFromService()
                 player?.removeListener(playerListener)
-                OrpheusMusicService.removeOnServiceReadyListener { }
                 player = null
+                spectrumCaptureRequested = false
                 spectrumManager.stop()
                 ioScope.cancel()
                 Log.d("Orpheus", "Destroy media controller")
@@ -611,22 +618,27 @@ class ExpoOrpheusModule : Module() {
 
         AsyncFunction("addToEnd") Coroutine { tracks: List<TrackRecord>, startFromId: String?, clearQueue: Boolean? ->
             val context = appContext.reactContext
-            val mediaItems = tracks.map { track ->
-                track.toMediaItem(context)
-            }
             withPlayerOnMainThread { currentPlayer ->
                 if (clearQueue == true) {
                     currentPlayer.clearMediaItems()
                 }
-                val initialSize = currentPlayer.mediaItemCount
+
+                val existingIds = (0 until currentPlayer.mediaItemCount)
+                    .mapTo(mutableSetOf()) { index -> currentPlayer.getMediaItemAt(index).mediaId }
+                val uniqueTracks = tracks.filter { track -> existingIds.add(track.id) }
+                val mediaItems = uniqueTracks.map { track -> track.toMediaItem(context) }
                 currentPlayer.addMediaItems(mediaItems)
 
                 if (!startFromId.isNullOrEmpty()) {
-                    val relativeIndex = tracks.indexOfFirst { it.id == startFromId }
+                    var targetIndex = C.INDEX_UNSET
+                    for (index in 0 until currentPlayer.mediaItemCount) {
+                        if (currentPlayer.getMediaItemAt(index).mediaId == startFromId) {
+                            targetIndex = index
+                            break
+                        }
+                    }
 
-                    if (relativeIndex != -1) {
-                        val targetIndex = initialSize + relativeIndex
-
+                    if (targetIndex != C.INDEX_UNSET) {
                         currentPlayer.seekTo(targetIndex, C.TIME_UNSET)
                         currentPlayer.prepare()
                         currentPlayer.play()
@@ -1013,6 +1025,37 @@ class ExpoOrpheusModule : Module() {
             withPlayerOnMainThread { it.setPlaybackSpeed(speed) }
         }
 
+        AsyncFunction("getTrackAudioEffectProfile") Coroutine { trackId: String ->
+            val profile = TrackAudioEffectStorage.getProfile(trackId)
+            mapOf(
+                "volumeDb" to profile.volumeDb,
+                "vocalStrength" to profile.vocalStrength,
+            )
+        }
+
+        AsyncFunction("setTrackAudioEffectProfile") Coroutine {
+                trackId: String,
+                volumeDb: Double,
+                vocalStrength: Double ->
+            withServiceOnMainThread { service ->
+                if (service != null) {
+                    service.setTrackAudioEffectProfile(trackId, volumeDb, vocalStrength)
+                } else {
+                    TrackAudioEffectStorage.setProfile(trackId, volumeDb, vocalStrength)
+                }
+            }
+        }
+
+        AsyncFunction("resetTrackAudioEffectProfile") Coroutine { trackId: String ->
+            withServiceOnMainThread { service ->
+                if (service != null) {
+                    service.resetTrackAudioEffectProfile(trackId)
+                } else {
+                    TrackAudioEffectStorage.resetProfile(trackId)
+                }
+            }
+        }
+
         AsyncFunction("selectDirectory") Coroutine { ->
             val context = appContext.reactContext ?: return@Coroutine null
             val uriString = try {
@@ -1065,6 +1108,21 @@ class ExpoOrpheusModule : Module() {
             val byteBuffer = destination.toDirectBuffer()
             byteBuffer.order(java.nio.ByteOrder.nativeOrder())
             byteBuffer.asFloatBuffer().put(buffer)
+        }
+
+        Function("setSpectrumCaptureEnabled") { enabled: Boolean ->
+            mainHandler.post {
+                spectrumCaptureRequested = enabled
+                updateSpectrumManagerState()
+            }
+        }
+
+        Function("setAppForeground") { foreground: Boolean ->
+            mainHandler.post {
+                isAppForeground = foreground
+                updateSpectrumManagerState()
+                updateProgressRunnerState()
+            }
         }
 
         Function("exportData") {
@@ -1169,7 +1227,7 @@ class ExpoOrpheusModule : Module() {
         override fun run() {
             val p = player ?: return
 
-            if (p.isPlaying) {
+            if (isAppForeground && p.isPlaying && p.playbackState == Player.STATE_READY) {
                 val currentMs = p.currentPosition
                 val durationMs = p.duration
 
@@ -1180,9 +1238,9 @@ class ExpoOrpheusModule : Module() {
                         "buffered" to p.bufferedPosition / 1000.0
                     )
                 )
-            }
 
-            mainHandler.postDelayed(this, 200)
+                mainHandler.postDelayed(this, 200)
+            }
         }
     }
 
@@ -1195,16 +1253,57 @@ class ExpoOrpheusModule : Module() {
 
     private fun updateProgressRunnerState() {
         val p = player
-        // 如果正在播放且状态是 READY，则开始轮询
+        mainHandler.removeCallbacks(progressSendEventRunnable)
+        mainHandler.removeCallbacks(progressSaveRunnable)
+
+        // Position persistence continues in the background so playback recovery remains accurate.
         if (p != null && p.isPlaying && p.playbackState == Player.STATE_READY) {
-            mainHandler.removeCallbacks(progressSendEventRunnable)
-            mainHandler.removeCallbacks(progressSaveRunnable)
             mainHandler.post(progressSaveRunnable)
-            mainHandler.post(progressSendEventRunnable)
-        } else {
-            mainHandler.removeCallbacks(progressSendEventRunnable)
-            mainHandler.removeCallbacks(progressSaveRunnable)
+            if (isAppForeground) {
+                mainHandler.post(progressSendEventRunnable)
+            }
         }
+    }
+
+    private fun updateSpectrumManagerState() {
+        val p = player
+        if (
+            spectrumCaptureRequested &&
+            isAppForeground &&
+            p?.isPlaying == true &&
+            p.audioSessionId != C.AUDIO_SESSION_ID_UNSET
+        ) {
+            spectrumManager.start(p.audioSessionId)
+        } else {
+            spectrumManager.stop()
+        }
+    }
+
+    private fun bindToService(service: OrpheusMusicService) {
+        if (boundService !== service) {
+            unbindFromService()
+            boundService = service
+            service.statusBarLyricsManager.setStatusChangeListener(statusChangeListener)
+            service.addTrackEventListener(trackEventListener)
+            service.addLyricEventListener(lyricEventListener)
+        }
+
+        if (player !== service.player) {
+            player?.removeListener(playerListener)
+            player = service.player
+            player?.addListener(playerListener)
+            updateProgressRunnerState()
+            updateSpectrumManagerState()
+        }
+    }
+
+    private fun unbindFromService() {
+        boundService?.let { service ->
+            service.statusBarLyricsManager.removeStatusChangeListener(statusChangeListener)
+            service.removeTrackEventListener(trackEventListener)
+            service.removeLyricEventListener(lyricEventListener)
+        }
+        boundService = null
     }
 
     private fun mediaItemToTrackRecord(item: MediaItem): TrackRecord {

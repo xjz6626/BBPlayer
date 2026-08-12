@@ -17,6 +17,7 @@ import expo.modules.orpheus.bilibili.BilibiliRepository
 import expo.modules.orpheus.manager.DownloadCache
 import expo.modules.orpheus.service.OrpheusDownloadService
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 @UnstableApi
@@ -32,6 +33,8 @@ object DownloadUtil {
     private var downloadDataSourceFactory: DataSource.Factory? = null
 
     private var downloadNotificationHelper: DownloadNotificationHelper? = null
+    private val prefetchExecutor = Executors.newFixedThreadPool(2)
+    private val prefetchingUris = ConcurrentHashMap.newKeySet<String>()
 
     @Synchronized
     fun getDownloadManager(context: Context): DownloadManager {
@@ -41,7 +44,7 @@ object DownloadUtil {
                 context,
                 databaseProvider,
                 DownloadCache.getStableCache(context),
-                getDownloadDataSourceFactory(),
+                getDownloadDataSourceFactory(context),
                 Executors.newFixedThreadPool(6)
             ).apply {
                 maxParallelDownloads = this@DownloadUtil.maxParallelDownloads
@@ -63,7 +66,7 @@ object DownloadUtil {
     @Synchronized
     fun getPlayerDataSourceFactory(context: Context): DataSource.Factory {
         if (playerDataSourceFactory == null) {
-            val upstreamFactory = getUpstreamFactory()
+            val upstreamFactory = getUpstreamFactory(context)
 
             val downloadCache = DownloadCache.getStableCache(context)
             val lruCache = DownloadCache.getLruCache(context)
@@ -86,14 +89,15 @@ object DownloadUtil {
 
 
     @Synchronized
-    private fun getDownloadDataSourceFactory(): DataSource.Factory {
+    private fun getDownloadDataSourceFactory(context: Context): DataSource.Factory {
         if (downloadDataSourceFactory == null) {
-            downloadDataSourceFactory = getUpstreamFactory()
+            downloadDataSourceFactory = getUpstreamFactory(context)
         }
         return downloadDataSourceFactory!!
     }
 
-    private fun getUpstreamFactory(): DataSource.Factory {
+    private fun getUpstreamFactory(context: Context): DataSource.Factory {
+        BilibiliRepository.initialize(context)
         val httpDataSourceFactory = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(
             expo.modules.orpheus.network.OkHttpClientManager.okHttpClient
         )
@@ -103,6 +107,23 @@ object DownloadUtil {
             httpDataSourceFactory,
             BilibiliResolver()
         )
+    }
+
+    /** Resolve the next Bilibili item off the playback critical path. */
+    fun prefetchBilibiliUri(uri: android.net.Uri?) {
+        if (uri?.scheme != "orpheus" || uri.host != "bilibili") return
+        val cacheKey = uri.toString()
+        if (!prefetchingUris.add(cacheKey)) return
+
+        prefetchExecutor.execute {
+            try {
+                resolveBilibiliUri(uri)
+            } catch (error: Exception) {
+                Log.w("Orpheus/Prefetch", "Failed to prefetch Bilibili audio URL: $uri", error)
+            } finally {
+                prefetchingUris.remove(cacheKey)
+            }
+        }
     }
 
     @Synchronized
@@ -130,17 +151,7 @@ object DownloadUtil {
             val uri = dataSpec.uri
             if (uri.scheme == "orpheus" && uri.host == "bilibili") {
                 try {
-                    val bvid = uri.getQueryParameter("bvid")
-                    val cid = uri.getQueryParameter("cid")?.toLongOrNull()
-                    val quality = uri.getQueryParameter("quality")?.toIntOrNull() ?: 30280
-                    val (realUrl, volume) = BilibiliRepository.resolveAudioUrl(
-                        bvid = bvid!!,
-                        cid = cid,
-                        audioQuality = quality,
-                        enableDolby = uri.getQueryParameter("dolby") == "1",
-                        enableHiRes = uri.getQueryParameter("hires") == "1",
-                        cookie = OrpheusConfig.bilibiliCookie
-                    )
+                    val (realUrl, volume) = resolveBilibiliUri(uri)
                     // 在这里保存响度均衡数据，并且直接发一个事件，在 OrpheusMusicService 监听
                     if (volume !== null) {
                         Log.d(
@@ -164,5 +175,18 @@ object DownloadUtil {
             }
             return dataSpec
         }
+    }
+
+    private fun resolveBilibiliUri(uri: android.net.Uri): Pair<String, expo.modules.orpheus.bilibili.VolumeData?> {
+        val bvid = uri.getQueryParameter("bvid")
+            ?: throw IOException("Missing bvid in Bilibili playback URI")
+        return BilibiliRepository.resolveAudioUrl(
+            bvid = bvid,
+            cid = uri.getQueryParameter("cid")?.toLongOrNull(),
+            audioQuality = uri.getQueryParameter("quality")?.toIntOrNull() ?: 30280,
+            enableDolby = uri.getQueryParameter("dolby") == "1",
+            enableHiRes = uri.getQueryParameter("hires") == "1",
+            cookie = OrpheusConfig.bilibiliCookie
+        )
     }
 }

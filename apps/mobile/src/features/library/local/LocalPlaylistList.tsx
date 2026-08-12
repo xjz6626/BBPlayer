@@ -1,11 +1,15 @@
 import { Icon } from '@expo/ui'
 import { LegendList } from '@legendapp/list/react-native'
+import { useRouter } from 'expo-router'
 import { memo, useCallback, useDeferredValue, useMemo, useState } from 'react'
-import { RefreshControl, StyleSheet, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
 import { Searchbar, Text, useTheme } from 'react-native-paper'
 
 import FunctionalMenu from '@/components/common/FunctionalMenu'
 import IconButton from '@/components/common/IconButton'
+import ThemedRefreshControl, {
+	ThemedRefreshIndicator,
+} from '@/components/theme/ThemedRefreshControl'
 import { DataFetchingError } from '@/features/library/shared/DataFetchingError'
 import { LocalPlaylistListSkeleton } from '@/features/library/skeletons/LibraryTabSkeleton'
 import useCurrentTrack from '@/hooks/player/useCurrentTrack'
@@ -29,6 +33,11 @@ const IMPORT_PLAYLIST_ICON = Icon.select({
 	android: import('@expo/material-symbols/link.xml'),
 })
 
+const IMPORT_TEXT_PLAYLIST_ICON = Icon.select({
+	ios: 'doc.on.clipboard',
+	android: import('@expo/material-symbols/content_paste.xml'),
+})
+
 const SUBSCRIBE_PLAYLIST_ICON = Icon.select({
 	ios: 'person.2',
 	android: import('@expo/material-symbols/group.xml'),
@@ -46,6 +55,7 @@ const renderPlaylistItem = ({
 }) => <LocalPlaylistItem item={item} />
 
 const LocalPlaylistListComponent = memo(() => {
+	const router = useRouter()
 	const { colors } = useTheme()
 	const haveTrack = useCurrentTrack()
 	const [refreshing, setRefreshing] = useState(false)
@@ -154,6 +164,14 @@ const LocalPlaylistListComponent = memo(() => {
 							title='导入外部歌单'
 						/>
 						<FunctionalMenu.Item
+							leadingIcon={IMPORT_TEXT_PLAYLIST_ICON}
+							onPress={() => {
+								setMenuVisible(false)
+								router.push('/playlist/text-import')
+							}}
+							title='从评论文本导入'
+						/>
+						<FunctionalMenu.Item
 							leadingIcon={SUBSCRIBE_PLAYLIST_ICON}
 							onPress={() => {
 								setMenuVisible(false)
@@ -193,7 +211,7 @@ const LocalPlaylistListComponent = memo(() => {
 					renderItem={renderPlaylistItem}
 					recycleItems
 					refreshControl={
-						<RefreshControl
+						<ThemedRefreshControl
 							refreshing={refreshing || playlistsIsRefetching}
 							onRefresh={onRefresh}
 							colors={[colors.primary]}
@@ -201,6 +219,11 @@ const LocalPlaylistListComponent = memo(() => {
 						/>
 					}
 					keyExtractor={keyExtractor}
+					ListHeaderComponent={
+						<ThemedRefreshIndicator
+							refreshing={refreshing || playlistsIsRefetching}
+						/>
+					}
 					ListFooterComponent={
 						<Text
 							variant='titleMedium'

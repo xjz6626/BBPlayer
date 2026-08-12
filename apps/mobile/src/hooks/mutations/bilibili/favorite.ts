@@ -41,6 +41,13 @@ export const useDealFavoriteForOneVideo = () => {
 				queryKey: ['bilibili', 'favoriteList', 'infiniteFavoriteList'],
 				type: 'active',
 			})
+			await queryClient.invalidateQueries({
+				queryKey: [
+					...favoriteListQueryKeys.all,
+					'favoriteForOneVideo',
+					_value.bvid,
+				],
+			})
 		},
 		onError: (error) => {
 			let errorMessage = '删除失败，请稍后重试'
@@ -57,6 +64,101 @@ export const useDealFavoriteForOneVideo = () => {
 				duration: Number.POSITIVE_INFINITY,
 			})
 			logger.error('删除收藏夹内容失败:', error)
+		},
+	})
+}
+
+/**
+ * 一键切换视频在默认收藏夹中的状态
+ */
+export const useToggleDefaultFavorite = () => {
+	const queryClient = useQueryClient()
+
+	return useMutation({
+		mutationFn: ({
+			bvid,
+			folderId,
+			favorite,
+		}: {
+			bvid: string
+			folderId: number
+			favorite: boolean
+		}) =>
+			returnOrThrowAsync(
+				bilibiliApi
+					.dealFavoriteForOneVideo({
+						bvid,
+						addToFavoriteIds: favorite ? [String(folderId)] : [],
+						delInFavoriteIds: favorite ? [] : [String(folderId)],
+					})
+					.map(() => true),
+			),
+		onSuccess: (_data, { favorite }) => {
+			toast.success(favorite ? '已收藏到默认收藏夹' : '已取消默认收藏')
+		},
+		onError: (error, { favorite }) => {
+			toastAndLogError(
+				favorite ? '收藏失败' : '取消收藏失败',
+				error,
+				'Mutation.Bilibili.Favorite',
+			)
+		},
+		onSettled: async (_data, _error, { bvid }, _result) => {
+			await queryClient.invalidateQueries({
+				queryKey: [...favoriteListQueryKeys.all, 'favoriteForOneVideo', bvid],
+			})
+		},
+	})
+}
+
+/**
+ * 列表菜单使用的一键收藏操作，只添加、不切换状态
+ */
+export const useAddToDefaultFavorite = () => {
+	const queryClient = useQueryClient()
+
+	return useMutation({
+		mutationFn: async ({
+			bvid,
+			userMid,
+		}: {
+			bvid: string
+			userMid: number
+		}) => {
+			const folders = await returnOrThrowAsync(
+				bilibiliApi.getTargetVideoFavoriteStatus({ userMid, bvid }),
+			)
+			const defaultFolder =
+				folders.find((folder) => ((folder.attr ?? 0) >> 1) % 2 === 0) ??
+				folders[0]
+			if (!defaultFolder) throw new Error('还没有可用的收藏夹')
+			if (defaultFolder.fav_state === 1) {
+				return { alreadyFavorite: true, folderTitle: defaultFolder.title }
+			}
+
+			await returnOrThrowAsync(
+				bilibiliApi.dealFavoriteForOneVideo({
+					bvid,
+					addToFavoriteIds: [String(defaultFolder.id)],
+					delInFavoriteIds: [],
+				}),
+			)
+			return { alreadyFavorite: false, folderTitle: defaultFolder.title }
+		},
+		onSuccess: ({ alreadyFavorite, folderTitle }) => {
+			toast.success(
+				alreadyFavorite
+					? `已经在「${folderTitle}」中`
+					: `已收藏到「${folderTitle}」`,
+			)
+		},
+		onError: (error) => {
+			toastAndLogError('收藏失败', error, 'Mutation.Bilibili.Favorite')
+		},
+		onSettled: async (_data, _error, { bvid }) => {
+			await queryClient.invalidateQueries({
+				queryKey: [...favoriteListQueryKeys.all, 'favoriteForOneVideo', bvid],
+			})
 		},
 	})
 }

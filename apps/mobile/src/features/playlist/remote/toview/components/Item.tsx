@@ -1,6 +1,6 @@
 import { Icon as ExpoIcon } from '@expo/ui'
 import { memo } from 'react'
-import { StyleSheet, useColorScheme, View } from 'react-native'
+import { StyleSheet, View } from 'react-native'
 import { Touchable } from 'react-native-gesture-handler'
 import { Icon, Surface, useTheme } from 'react-native-paper'
 
@@ -10,6 +10,7 @@ import UniversalCheckbox from '@/components/common/UniversalCheckbox'
 import { VariantPlainText } from '@/components/common/VariantPlainText'
 import type { ExtraData } from '@/features/playlist/remote/components/RemoteTrackList'
 import useIsCurrentTrack from '@/hooks/player/useIsCurrentTrack'
+import useResolvedColorScheme from '@/hooks/theme/useResolvedColorScheme'
 import {
 	LIST_ITEM_BORDER_RADIUS,
 	LIST_ITEM_COVER_SIZE,
@@ -72,7 +73,7 @@ export const ToViewTrackListItem = memo(function ToViewTrackListItem({
 	enterSelectMode,
 }: TrackListItemProps) {
 	const { colors } = useTheme()
-	const dark = useColorScheme() === 'dark'
+	const dark = useResolvedColorScheme() === 'dark'
 	const isCurrentTrack = useIsCurrentTrack(data.uniqueKey)
 
 	const highlighted = (isCurrentTrack && !selectMode) || isSelected

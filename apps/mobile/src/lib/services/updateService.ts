@@ -4,6 +4,7 @@ import Constants from 'expo-constants'
 import { err, ok, type Result } from 'neverthrow'
 
 export interface ReleaseInfo {
+	buildCommit?: string
 	version: string
 	notes: string
 	listed_notes?: string[]
@@ -16,20 +17,15 @@ export interface UpdateDownloads {
 	android?: Record<string, string>
 }
 
-export interface UpdateManifest {
-	version: string
-	notes?: string
-	listed_notes?: string[]
-	url: string
-	downloads?: UpdateDownloads
-	forced?: boolean
+interface UpdateSourceConfig {
+	buildCommit?: string
+	updateReleaseTag?: string
+	updateRepository?: string
 }
 
-const getManifestUrl = (): string | undefined => {
-	const extra = Constants?.expoConfig?.extra as
-		| { updateManifestUrl?: string }
-		| undefined
-	return extra?.updateManifestUrl
+const getUpdateSourceConfig = (): UpdateSourceConfig => {
+	const extra = Constants?.expoConfig?.extra as UpdateSourceConfig | undefined
+	return extra ?? {}
 }
 
 const toError = (e: unknown): Error =>
@@ -60,46 +56,32 @@ export async function fetchLatestRelease(): Promise<
 	Result<ReleaseInfo, Error>
 > {
 	try {
-		const manifestUrl = getManifestUrl()
-		if (!manifestUrl) {
-			return err(new Error('未在 app.config 中配置更新渠道 updateManifestUrl'))
+		const { updateReleaseTag, updateRepository } = getUpdateSourceConfig()
+		if (!updateRepository || !updateReleaseTag) {
+			return err(new Error('未在 app.config 中配置 GitHub 更新渠道'))
 		}
-		const res = await Sentry.startSpan(
-			{ name: 'http:fetch:update-manifest', op: 'http' },
-			() => fetch(manifestUrl, { cache: 'no-store' }),
+
+		const manifestUrl = `https://github.com/${updateRepository}/releases/download/${encodeURIComponent(updateReleaseTag)}/nightly-update.json`
+		const requestOptions: RequestInit = {
+			cache: 'no-store',
+			headers: {
+				Accept: 'application/json',
+			},
+		}
+		const response = await Sentry.startSpan(
+			{ name: 'http:fetch:github-nightly-manifest', op: 'http' },
+			() => fetch(manifestUrl, requestOptions),
 		)
-		if (!res.ok) {
-			return err(new Error(`拉取更新信息: ${res.status} ${res.statusText}`))
+		if (!response.ok) {
+			return err(
+				new Error(
+					`Nightly 更新清单请求失败: ${response.status} ${response.statusText}`,
+				),
+			)
 		}
-		const json: unknown = await res.json()
-		if (typeof json !== 'object' || json === null) {
-			return err(new Error('更新信息格式错误'))
-		}
-		const obj = json as Record<string, unknown>
-		const version = obj.version
-		const url = obj.url
-		if (typeof version !== 'string' || typeof url !== 'string') {
-			return err(new Error('更新信息格式错误'))
-		}
-		const notes = typeof obj.notes === 'string' ? obj.notes : ''
-		const listed_notes =
-			Array.isArray(obj.listed_notes) &&
-			obj.listed_notes.every((i) => typeof i === 'string')
-				? obj.listed_notes
-				: undefined
-		const forced = typeof obj.forced === 'boolean' ? obj.forced : false
-		const downloads =
-			typeof obj.downloads === 'object' && obj.downloads !== null
-				? parseDownloads(obj.downloads)
-				: undefined
-		const releaseInfo = {
-			version: normalizeVersion(version),
-			url,
-			notes,
-			listed_notes,
-			downloads,
-			forced,
-		}
+
+		const releaseInfo = parseReleaseInfo(await response.json())
+		if (!releaseInfo) return err(new Error('Nightly 更新清单格式错误'))
 		return ok(releaseInfo)
 	} catch (e) {
 		return err(toError(e))
@@ -119,30 +101,61 @@ export async function checkForAppUpdate(): Promise<
 	const latest = await fetchLatestRelease()
 	if (latest.isErr()) return err(latest.error)
 	const info = latest.value
+	const currentBuildCommit = getUpdateSourceConfig().buildCommit?.toLowerCase()
+	if (info.buildCommit) {
+		if (currentBuildCommit === info.buildCommit.toLowerCase()) {
+			return ok({ update: null, currentVersion })
+		}
+		return ok({ update: info, currentVersion })
+	}
 	if (compareSemver(info.version, currentVersion) <= 0) {
 		return ok({ update: null, currentVersion })
 	}
 	return ok({ update: info, currentVersion })
 }
 
-const parseDownloads = (value: object): UpdateDownloads | undefined => {
-	const downloads = value as Record<string, unknown>
-	const android = parseStringRecord(downloads.android)
-	if (!android) return undefined
-	return { android }
-}
-
-const parseStringRecord = (
-	value: unknown,
-): Record<string, string> | undefined => {
-	if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+const parseReleaseInfo = (value: unknown): ReleaseInfo | undefined => {
+	if (typeof value !== 'object' || value === null) return undefined
+	const manifest = value as Record<string, unknown>
+	const buildCommit = manifest.buildCommit
+	const version = manifest.version
+	const notes = manifest.notes
+	const url = manifest.url
+	const forced = manifest.forced
+	const downloads = parseUpdateDownloads(manifest.downloads)
+	if (
+		typeof buildCommit !== 'string' ||
+		typeof version !== 'string' ||
+		typeof notes !== 'string' ||
+		typeof url !== 'string' ||
+		typeof forced !== 'boolean' ||
+		!downloads
+	) {
 		return undefined
 	}
+	const listedNotes = manifest.listed_notes
+	return {
+		buildCommit,
+		version,
+		notes,
+		url,
+		downloads,
+		forced,
+		...(Array.isArray(listedNotes) &&
+		listedNotes.every((item) => typeof item === 'string')
+			? { listed_notes: listedNotes }
+			: {}),
+	}
+}
 
-	const entries = Object.entries(value)
-		.filter(([, v]) => typeof v === 'string')
-		.map(([k, v]) => [k, v] as const)
-
-	if (entries.length === 0) return undefined
-	return Object.fromEntries(entries)
+const parseUpdateDownloads = (value: unknown): UpdateDownloads | undefined => {
+	if (typeof value !== 'object' || value === null) return undefined
+	const android = (value as Record<string, unknown>).android
+	if (typeof android !== 'object' || android === null) return undefined
+	const entries = Object.entries(android).filter(
+		(entry): entry is [string, string] => typeof entry[1] === 'string',
+	)
+	return entries.length > 0
+		? { android: Object.fromEntries(entries) }
+		: undefined
 }

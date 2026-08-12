@@ -22,6 +22,12 @@ class StatusBarLyricsManager(private val context: Context) {
         statusChangeListener = listener
     }
 
+    fun removeStatusChangeListener(listener: StatusChangeListener) {
+        if (statusChangeListener === listener) {
+            statusChangeListener = null
+        }
+    }
+
     fun notifyStatusChanged() {
         statusChangeListener?.onStatusChanged()
     }
