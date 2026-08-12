@@ -2,6 +2,7 @@ import { createMiddleware } from 'hono/factory'
 
 import { createDb } from '../db'
 import type { DrizzleDb } from '../db'
+import type { WorkerBindings } from '../types'
 
 export type DatabaseVariables = {
 	db: DrizzleDb
@@ -12,7 +13,7 @@ export type DatabaseVariables = {
  * the downstream handler finishes, including early responses and thrown errors.
  */
 export const databaseMiddleware = createMiddleware<{
-	Bindings: Env
+	Bindings: WorkerBindings
 	Variables: DatabaseVariables
 }>(async (c, next) => {
 	const { db, client } = await createDb(c.env.DATABASE_URL)

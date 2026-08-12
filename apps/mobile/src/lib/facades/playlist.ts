@@ -2,17 +2,23 @@ import type { Track as OrpheusTrack } from '@bbplayer/orpheus'
 import type { ExpoSQLiteDatabase } from 'drizzle-orm/expo-sqlite'
 import { ResultAsync, errAsync } from 'neverthrow'
 
-import { api as bbplayerApi } from '@/lib/api/bbplayer/client'
-import db from '@/lib/db/db'
+import { api as bbplayerApiInstance } from '@/lib/api/bbplayer/client'
+import defaultDb from '@/lib/db/db'
 import * as schema from '@/lib/db/schema'
 import { createFacadeError } from '@/lib/errors/facade'
 import { createValidationError } from '@/lib/errors/service'
-import { artistService, type ArtistService } from '@/lib/services/artistService'
 import {
-	playlistService,
+	artistService as artistServiceInstance,
+	type ArtistService,
+} from '@/lib/services/artistService'
+import {
+	playlistService as playlistServiceInstance,
 	type PlaylistService,
 } from '@/lib/services/playlistService'
-import { trackService, type TrackService } from '@/lib/services/trackService'
+import {
+	trackService as trackServiceInstance,
+	type TrackService,
+} from '@/lib/services/trackService'
 import { playlistSyncWorker } from '@/lib/workers/PlaylistSyncWorker'
 import type { BilibiliTrack } from '@/types/core/media'
 import type { CreateArtistPayload } from '@/types/services/artist'
@@ -23,7 +29,7 @@ import type {
 import type { CreateTrackPayload } from '@/types/services/track'
 import log from '@/utils/log'
 
-type BbplayerApiClient = typeof bbplayerApi
+type BbplayerApiClient = typeof bbplayerApiInstance
 
 const logger = log.extend('Facade')
 
@@ -963,9 +969,9 @@ export class PlaylistFacade {
 }
 
 export const playlistFacade = new PlaylistFacade(
-	trackService,
-	playlistService,
-	artistService,
-	db,
-	bbplayerApi,
+	trackServiceInstance,
+	playlistServiceInstance,
+	artistServiceInstance,
+	defaultDb,
+	bbplayerApiInstance,
 )

@@ -17,6 +17,7 @@ import { useRemotePlaylist } from '@/features/playlist/remote/hooks/useRemotePla
 import { useTrackSelection } from '@/features/playlist/remote/hooks/useTrackSelection'
 import { PlaylistPageSkeleton } from '@/features/playlist/skeletons/PlaylistSkeleton'
 import { useInfiniteFavoriteList } from '@/hooks/queries/bilibili/favorite'
+import useAppStore from '@/hooks/stores/useAppStore'
 import { useModalStore } from '@/hooks/stores/useModalStore'
 import { useDoubleTapScrollToTop } from '@/hooks/ui/useDoubleTapScrollToTop'
 import { usePlaylistBackgroundColor } from '@/hooks/ui/usePlaylistBackgroundColor'
@@ -121,9 +122,21 @@ export default function FavoritePage() {
 			return
 		}
 
+		const { expandMultiPageOnSync } = useAppStore.getState().settings
+		if (expandMultiPageOnSync === null) {
+			openModal('SyncOptions', {
+				favoriteId: Number(id),
+				shouldRedirectToLocalPlaylist: true,
+			})
+			return
+		}
 		openModal(
 			'FavoriteSyncProgress',
-			{ favoriteId: Number(id), shouldRedirectToLocalPlaylist: true },
+			{
+				favoriteId: Number(id),
+				shouldRedirectToLocalPlaylist: true,
+				expandMultiPage: expandMultiPageOnSync,
+			},
 			{ dismissible: false },
 		)
 	}, [favoriteData?.pages, id, openModal])
@@ -194,8 +207,8 @@ export default function FavoritePage() {
 							icon='playlist-plus'
 							onPress={() => {
 								const payloads = []
-								for (const id of selected) {
-									const track = tracks.find((t) => t.id === id)
+								for (const selectedId of selected) {
+									const track = tracks.find((t) => t.id === selectedId)
 									if (track) {
 										payloads.push({
 											track: track as Track,

@@ -115,7 +115,7 @@ export default function DynamicFeedPage() {
 						<Button
 							mode='contained'
 							onPress={() =>
-								router.push('/settings/bilibili-account/qrcode-login' as never)
+								router.push('/settings/bilibili-account/qrcode-login')
 							}
 						>
 							去登录

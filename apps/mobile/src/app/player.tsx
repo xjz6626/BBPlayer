@@ -7,6 +7,7 @@ import {
 	vec,
 } from '@shopify/react-native-skia'
 import { useImage } from 'expo-image'
+import { useObserve } from 'expo-observe'
 import { router } from 'expo-router'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AppState, StyleSheet, useWindowDimensions, View } from 'react-native'
@@ -32,7 +33,6 @@ import usePreventRemove from '@/hooks/router/usePreventRemove'
 import useAppStore from '@/hooks/stores/useAppStore'
 import { usePlayerQueueSheetStore } from '@/hooks/stores/usePlayerQueueSheetStore'
 import useResolvedColorScheme from '@/hooks/theme/useResolvedColorScheme'
-import { useScreenDimensions } from '@/hooks/ui/useScreenDimensions'
 import { resolveBilibiliImageUrl, resolveTrackCover } from '@/utils/imageUrl'
 import log, { reportErrorToSentry } from '@/utils/log'
 import toast from '@/utils/toast'
@@ -74,6 +74,11 @@ export default function PlayerPage() {
 	const insets = useSafeAreaInsets()
 	const pagerRef = useRef<PagerView>(null)
 	const currentTrack = useCurrentTrack()
+	const { markInteractive } = useObserve()
+
+	useEffect(() => {
+		markInteractive()
+	}, [markInteractive])
 	const currentTrackCover = resolveBilibiliImageUrl(
 		currentTrack
 			? resolveTrackCover(currentTrack.uniqueKey, currentTrack.coverUrl)
@@ -82,7 +87,7 @@ export default function PlayerPage() {
 	const coverRef = useImage(currentTrackCover ?? '', {
 		onError: () => void 0,
 	})
-	const { width } = useWindowDimensions()
+	const { width, height } = useWindowDimensions()
 	const colorScheme = useResolvedColorScheme()
 	const playerBackgroundStyle = useAppStore(
 		(state) => state.settings.playerBackgroundStyle,
@@ -119,8 +124,6 @@ export default function PlayerPage() {
 			subscription.remove()
 		}
 	}, [])
-
-	const { height: realHeight } = useScreenDimensions()
 
 	const gradientMainColor = useSharedValue(colors.background)
 	const scrollX = useSharedValue(0)
@@ -208,7 +211,7 @@ export default function PlayerPage() {
 		handleDismiss()
 	})
 
-	const scrimEndVec = vec(0, realHeight * 0.5)
+	const scrimEndVec = vec(0, height * 0.5)
 
 	useEffect(() => {
 		// @ts-expect-error -- 虽然我们项目内已经移除了 streamer 选项，但部分存量用户可能还在这个选项，需要帮他回退
@@ -235,7 +238,7 @@ export default function PlayerPage() {
 						x={0}
 						y={0}
 						width={width}
-						height={realHeight}
+						height={height}
 						color={colors.background}
 					/>
 					{playerBackgroundStyle === 'gradient' && (
@@ -244,11 +247,11 @@ export default function PlayerPage() {
 								x={0}
 								y={0}
 								width={width}
-								height={realHeight}
+								height={height}
 							>
 								<LinearGradient
 									start={vec(0, 0)}
-									end={vec(0, realHeight)}
+									end={vec(0, height)}
 									colors={gradientColors}
 									positions={[0, 1]}
 								/>
@@ -257,7 +260,7 @@ export default function PlayerPage() {
 								x={0}
 								y={0}
 								width={width}
-								height={realHeight}
+								height={height}
 							>
 								<LinearGradient
 									start={vec(0, 0)}

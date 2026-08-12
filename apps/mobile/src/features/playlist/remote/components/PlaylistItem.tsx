@@ -7,6 +7,7 @@ import { Icon, Surface, Text, useTheme } from 'react-native-paper'
 import CoverWithPlaceHolder from '@/components/common/CoverWithPlaceHolder'
 import FunctionalMenu from '@/components/common/FunctionalMenu'
 import UniversalCheckbox from '@/components/common/UniversalCheckbox'
+import { VariantPlainText } from '@/components/common/VariantPlainText'
 import useIsCurrentTrack from '@/hooks/player/useIsCurrentTrack'
 import useResolvedColorScheme from '@/hooks/theme/useResolvedColorScheme'
 import { analyticsService } from '@/lib/services/analyticsService'
@@ -153,12 +154,12 @@ export const TrackListItem = memo(function TrackListItem({
 
 						{/* 序号也是 */}
 						<View style={{ opacity: selectMode ? 0 : 1 }}>
-							<Text
+							<VariantPlainText
 								variant='bodyMedium'
 								style={{ color: colors.onSurfaceVariant }}
 							>
-								{index + 1}
-							</Text>
+								{String(index + 1)}
+							</VariantPlainText>
 						</View>
 					</View>
 
@@ -180,30 +181,32 @@ export const TrackListItem = memo(function TrackListItem({
 								text={data.titleHtml}
 							/>
 						) : (
-							<Text variant='bodySmall'>{data.title}</Text>
+							<VariantPlainText variant='bodySmall'>
+								{data.title}
+							</VariantPlainText>
 						)}
 						<View style={styles.detailsContainer}>
 							{/* Display Artist if available */}
 							{data.artistName && (
 								<>
-									<Text
+									<VariantPlainText
 										variant='bodySmall'
 										numberOfLines={1}
 									>
 										{data.artistName ?? '未知'}
-									</Text>
-									<Text
+									</VariantPlainText>
+									<VariantPlainText
 										style={styles.dotSeparator}
 										variant='bodySmall'
 									>
 										•
-									</Text>
+									</VariantPlainText>
 								</>
 							)}
 							{/* Display Duration */}
-							<Text variant='bodySmall'>
+							<VariantPlainText variant='bodySmall'>
 								{data.duration ? formatDurationToHHMMSS(data.duration) : ''}
-							</Text>
+							</VariantPlainText>
 						</View>
 					</View>
 

@@ -2,9 +2,9 @@ import type { ExpoSQLiteDatabase } from 'drizzle-orm/expo-sqlite'
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from 'neverthrow'
 
 import type { bilibiliApi as BilibiliApiService } from '@/lib/api/bilibili/api'
-import { bilibiliApi } from '@/lib/api/bilibili/api'
+import { bilibiliApi as bilibiliApiInstance } from '@/lib/api/bilibili/api'
 import { av2bv, bv2av } from '@/lib/api/bilibili/utils'
-import db from '@/lib/db/db'
+import defaultDb from '@/lib/db/db'
 import type * as schema from '@/lib/db/schema'
 import type { DatabaseError, ServiceError } from '@/lib/errors'
 import type { FacadeError } from '@/lib/errors/facade'
@@ -16,13 +16,14 @@ import { createValidationError } from '@/lib/errors/service'
 import type { BilibiliApiError } from '@/lib/errors/thirdparty/bilibili'
 import { analyticsService } from '@/lib/services/analyticsService'
 import type { ArtistService } from '@/lib/services/artistService'
-import { artistService } from '@/lib/services/artistService'
+import { artistService as artistServiceInstance } from '@/lib/services/artistService'
 import generateUniqueTrackKey from '@/lib/services/genKey'
 import type { PlaylistService } from '@/lib/services/playlistService'
-import { playlistService } from '@/lib/services/playlistService'
+import { playlistService as playlistServiceInstance } from '@/lib/services/playlistService'
 import type { TrackService } from '@/lib/services/trackService'
-import { trackService } from '@/lib/services/trackService'
+import { trackService as trackServiceInstance } from '@/lib/services/trackService'
 import type { BilibiliFavoriteListContent } from '@/types/apis/bilibili'
+import type { BilibiliMultipageVideo } from '@/types/apis/bilibili'
 import type { BilibiliTrack, Playlist, Track } from '@/types/core/media'
 import type { CreateArtistPayload } from '@/types/services/artist'
 import log from '@/utils/log'
@@ -43,6 +44,22 @@ export interface FavoriteSyncProgress {
 		| 'error'
 }
 
+/** 展开分 P 后的单条 track 数据 */
+interface ExpandedTrackData {
+	bvid: string
+	title: string
+	duration: number
+	cid: number | null
+	isMultiPage: boolean
+	mainTrackTitle?: string | null
+	videoIsValid: boolean
+	coverUrl: string | null
+	artistId?: number
+	upperMid?: number
+}
+
+const PAGE_LIST_CONCURRENCY = 6
+
 let logger = log.extend('Facade')
 
 export class SyncBilibiliPlaylistFacade {
@@ -54,6 +71,106 @@ export class SyncBilibiliPlaylistFacade {
 		private readonly artistService: ArtistService,
 		private readonly db: ExpoSQLiteDatabase<typeof schema>,
 	) {}
+
+	/**
+	 * 并发获取一批 bvid 的分 P 列表。
+	 * ResponseFailed（视频失效等业务性失败）的 bvid 折叠为单条跳过，记录在 skippedBvids；
+	 * 网络类失败（RequestFailed/RequestAborted）则整体失败
+	 */
+	private async fetchPageLists(bvids: string[]): Promise<
+		Result<
+			{
+				pageLists: Map<string, BilibiliMultipageVideo[]>
+				skippedBvids: string[]
+			},
+			BilibiliApiError
+		>
+	> {
+		const results = new Map<string, BilibiliMultipageVideo[]>()
+		const skippedBvids: string[] = []
+		let index = 0
+		let firstError: BilibiliApiError | null = null
+		const worker = async () => {
+			while (index < bvids.length && !firstError) {
+				const bvid = bvids[index]
+				index += 1
+				// oxlint-disable-next-line no-await-in-loop
+				const res = await this.bilibiliApi.getPageList({ bvid })
+				if (res.isErr()) {
+					if (res.error.type === 'ResponseFailed') {
+						logger.warning('获取分 P 列表失败，折叠为单条', {
+							bvid,
+							message: res.error.message,
+						})
+						skippedBvids.push(bvid)
+						continue
+					}
+					firstError = res.error
+					logger.error('展开分 P：分 P 列表查询失败', {
+						bvid,
+						type: res.error.type,
+						message: res.error.message,
+					})
+					return
+				}
+				results.set(bvid, res.value)
+			}
+		}
+		await Promise.all(
+			Array.from(
+				{ length: Math.min(PAGE_LIST_CONCURRENCY, bvids.length) },
+				() => worker(),
+			),
+		)
+		if (firstError) {
+			return err(firstError)
+		}
+		return ok({ pageLists: results, skippedBvids })
+	}
+
+	/**
+	 * 将分 P 列表展开为 track 数据；单 P 视频折叠为单条（isMultiPage: false）
+	 */
+	private expandFromPages(
+		bvid: string,
+		pages: BilibiliMultipageVideo[],
+		mainInfo: {
+			title: string
+			coverUrl: string | null
+			duration: number
+			videoIsValid: boolean
+			artistId?: number
+			upperMid?: number
+		},
+	): ExpandedTrackData[] {
+		if (pages.length <= 1) {
+			return [
+				{
+					bvid,
+					title: mainInfo.title,
+					duration: mainInfo.duration,
+					cid: null,
+					isMultiPage: false,
+					videoIsValid: mainInfo.videoIsValid,
+					coverUrl: mainInfo.coverUrl,
+					artistId: mainInfo.artistId,
+					upperMid: mainInfo.upperMid,
+				},
+			]
+		}
+		return pages.map((p) => ({
+			bvid,
+			title: p.part,
+			duration: p.duration,
+			cid: p.cid,
+			isMultiPage: true,
+			mainTrackTitle: mainInfo.title,
+			videoIsValid: mainInfo.videoIsValid,
+			coverUrl: mainInfo.coverUrl,
+			artistId: mainInfo.artistId,
+			upperMid: mainInfo.upperMid,
+		}))
+	}
 
 	/**
 	 * 从 Bilibili API 获取视频信息，并创建一个新的音轨。
@@ -459,11 +576,13 @@ export class SyncBilibiliPlaylistFacade {
 	/**
 	 * 同步收藏夹内容，会对要同步的内容做基础的 diff 处理
 	 * @param favoriteId 收藏夹 ID
+	 * @param expandMultiPage 是否展开分 P 视频
 	 * @returns Result 成功时为 playlist ID，undefined 表示远端收藏夹为空，并且本地之前也没有创建过（这种情况前端不应该显示同步按钮）
 	 */
 	public async syncFavorite(
 		favoriteId: number,
 		onProgress?: (progress: FavoriteSyncProgress) => void,
+		expandMultiPage = false,
 	): Promise<Result<number | undefined, FacadeError | BilibiliApiError>> {
 		// getFavoriteListAllContents 获取到的 bvid 中会包含被 up 隐藏的视频，但这部分视频在 getFavoriteListContents 中是找不到的，也就无法添加到本地数据库。这导致对于包含这种视频的收藏夹，每次同步都会重新「同步」这些视频，但咱们没办法......
 		if (this.syncingIds.has(`favorite::${favoriteId}`)) {
@@ -527,6 +646,7 @@ export class SyncBilibiliPlaylistFacade {
 			})
 			let bvidsToAddSet: Set<string>
 			let bvidsToRemoveSet: Set<string>
+			let biliTracks: BilibiliTrack[] = []
 			const afterRemovedHiddenBvidsAllBvids = new Set<string>(
 				bilibiliFavoriteListAllBvids.map((item) => item.bvid),
 			) // 删除被隐藏的视频后的所有 bvid（在元数据请求完成后处理删除逻辑）
@@ -552,7 +672,7 @@ export class SyncBilibiliPlaylistFacade {
 						),
 					)
 				}
-				const biliTracks = existTracks.value as BilibiliTrack[]
+				biliTracks = existTracks.value as BilibiliTrack[]
 				const diff = diffSets(
 					new Set(bilibiliFavoriteListAllBvids.map((item) => item.bvid)),
 					new Set(biliTracks.map((item) => item.bilibiliMetadata.bvid)),
@@ -570,8 +690,19 @@ export class SyncBilibiliPlaylistFacade {
 				removed: bvidsToRemoveSet.size,
 			})
 			if (bvidsToAddSet.size === 0 && bvidsToRemoveSet.size === 0) {
-				logger.info('收藏夹为空或与上次相比无变化，无需同步')
-				return ok(localPlaylist.value?.id)
+				const localIsExpanded = biliTracks.some(
+					(t) => t.bilibiliMetadata.isMultiPage,
+				)
+				if (localIsExpanded === expandMultiPage) {
+					logger.info('收藏夹为空或与上次相比无变化，无需同步')
+					return ok(localPlaylist.value?.id)
+				}
+				// 收藏夹内容无变化，但所选同步模式与本地状态不一致（切换了展开/折叠），按所选模式重建
+				// uniqueKey 依赖 isMultiPage，重建必须按所选模式重新生成所有 track，因此把全部 bvid 视为新增
+				logger.info(
+					'收藏夹内容无变化，但同步模式与本地状态不一致，按所选模式重建',
+				)
+				bvidsToAddSet = new Set(afterRemovedHiddenBvidsAllBvids)
 			}
 
 			// 开始获取收藏夹新增部分 bvid 的详细元数据
@@ -648,6 +779,134 @@ export class SyncBilibiliPlaylistFacade {
 				requestApiTimes: nowPageNumber,
 			})
 
+			// 展开分 P：为收藏夹内所有 bvid 构建展开后的 track 数据
+			// 新增 bvid 与本地为折叠态的 bvid 需要查分 P 列表；本地已展开的 bvid 直接复用，不发请求
+			let expandedTracksMap: Map<string, ExpandedTrackData[]> | null = null
+			const addedBvidSet = new Set(
+				Array.from(addedTracksMetadata).map((item) => item.bvid),
+			)
+			if (expandMultiPage) {
+				onProgress?.({
+					message: '正在获取分 P 信息...',
+					stage: 'fetching_details',
+				})
+				const localGrouped = new Map<string, BilibiliTrack[]>()
+				for (const track of biliTracks) {
+					const list = localGrouped.get(track.bilibiliMetadata.bvid) ?? []
+					list.push(track)
+					localGrouped.set(track.bilibiliMetadata.bvid, list)
+				}
+				const allBvids = Array.from(afterRemovedHiddenBvidsAllBvids)
+
+				const mainInfoMap = new Map<
+					string,
+					{
+						title: string
+						coverUrl: string | null
+						duration: number
+						videoIsValid: boolean
+						pageCount?: number
+						artistId?: number
+						upperMid?: number
+					}
+				>()
+				for (const item of addedTracksMetadata) {
+					mainInfoMap.set(item.bvid, {
+						title: item.title,
+						coverUrl: item.cover,
+						duration: item.duration,
+						videoIsValid: item.attr === 0,
+						pageCount: item.page,
+						upperMid: item.upper.mid,
+					})
+				}
+				for (const [bvid, local] of localGrouped) {
+					if (mainInfoMap.has(bvid)) continue
+					const first = local[0]
+					mainInfoMap.set(bvid, {
+						title: first.title,
+						coverUrl: first.coverUrl,
+						duration: first.duration,
+						videoIsValid: first.bilibiliMetadata.videoIsValid,
+						artistId: first.artist?.id,
+					})
+				}
+
+				const toQueryBvids = allBvids.filter((bvid) => {
+					const local = localGrouped.get(bvid)
+					if (local?.some((t) => t.bilibiliMetadata.isMultiPage)) {
+						return false
+					}
+					const info = mainInfoMap.get(bvid)
+					// 失效视频无法获取分 P 信息，折叠为单条兜底（与不展开模式一致）
+					if (info && !info.videoIsValid) return false
+					// 收藏夹接口直接带分 P 数量，单 P 视频无需查询
+					if (info && info.pageCount !== undefined && info.pageCount <= 1) {
+						return false
+					}
+					return true
+				})
+				logger.debug('展开分 P：统计', {
+					total: allBvids.length,
+					reused: allBvids.length - toQueryBvids.length,
+					toQuery: toQueryBvids.length,
+					singlePageSkipped: Array.from(mainInfoMap.values()).filter(
+						(v) => v.pageCount !== undefined && v.pageCount <= 1,
+					).length,
+					locallyCollapsed: Array.from(mainInfoMap.values()).filter(
+						(v) => !v.videoIsValid,
+					).length,
+				})
+				const pageListsResult = await this.fetchPageLists(toQueryBvids)
+				if (pageListsResult.isErr()) {
+					return err(pageListsResult.error)
+				}
+				const { pageLists, skippedBvids } = pageListsResult.value
+				if (skippedBvids.length > 0) {
+					logger.warning('展开分 P：以下视频查询失败，已折叠为单条', {
+						bvids: skippedBvids,
+					})
+				}
+
+				expandedTracksMap = new Map()
+				for (const bvid of allBvids) {
+					const local = localGrouped.get(bvid)
+					if (local?.some((t) => t.bilibiliMetadata.isMultiPage)) {
+						expandedTracksMap.set(
+							bvid,
+							local.map((t) => ({
+								bvid,
+								title: t.title,
+								duration: t.duration,
+								cid: t.bilibiliMetadata.cid,
+								isMultiPage: true,
+								mainTrackTitle: t.bilibiliMetadata.mainTrackTitle,
+								videoIsValid: t.bilibiliMetadata.videoIsValid,
+								coverUrl: t.coverUrl,
+								artistId: t.artist?.id,
+							})),
+						)
+						continue
+					}
+					const info = mainInfoMap.get(bvid)
+					if (!info) {
+						return err(
+							createFacadeError(
+								'SyncFavoriteFailed',
+								'展开分 P 失败：缺少视频元数据',
+							),
+						)
+					}
+					expandedTracksMap.set(
+						bvid,
+						this.expandFromPages(bvid, pageLists.get(bvid) ?? [], info),
+					)
+				}
+				logger.debug('step 5: 展开分 P 视频完成', {
+					total: allBvids.length,
+				})
+			}
+
 			onProgress?.({
 				message: '正在保存数据到数据库...',
 				stage: 'saving',
@@ -668,7 +927,7 @@ export class SyncBilibiliPlaylistFacade {
 						throw playlistAuthor.error
 					}
 
-					const localPlaylist = await playlistSvc.findOrCreateRemotePlaylist({
+					const playlistResult = await playlistSvc.findOrCreateRemotePlaylist({
 						title: bilibiliFavoriteListMetadata.info!.title,
 						description: bilibiliFavoriteListMetadata.info!.intro,
 						coverUrl: bilibiliFavoriteListMetadata.info!.cover,
@@ -676,11 +935,11 @@ export class SyncBilibiliPlaylistFacade {
 						remoteSyncId: favoriteId,
 						authorId: playlistAuthor.value.id,
 					})
-					if (localPlaylist.isErr()) {
-						throw localPlaylist.error
+					if (playlistResult.isErr()) {
+						throw playlistResult.error
 					}
 					logger.debug('step 5: 创建 playlist 和其对应的 author 信息完成', {
-						localPlaylistId: localPlaylist.value.id,
+						localPlaylistId: playlistResult.value.id,
 						artistId: playlistAuthor.value.id,
 					})
 
@@ -709,21 +968,40 @@ export class SyncBilibiliPlaylistFacade {
 						total: artistsMap.value.size,
 					})
 
-					const addedTrackPayloads = Array.from(addedTracksMetadata).map(
-						(v) => ({
-							title: v.title,
-							source: 'bilibili' as const,
-							bilibiliMetadata: {
-								bvid: v.bvid,
-								isMultiPage: false,
-								cid: null,
-								videoIsValid: v.attr === 0,
-							},
-							coverUrl: v.cover,
-							duration: v.duration,
-							artistId: artistsMap.value.get(String(v.upper.mid))?.id,
-						}),
-					)
+					const addedTrackPayloads = expandedTracksMap
+						? Array.from(expandedTracksMap.entries())
+								.filter(([bvid]) => addedBvidSet.has(bvid))
+								.flatMap(([, tracks]) =>
+									tracks.map((t) => ({
+										title: t.title,
+										source: 'bilibili' as const,
+										bilibiliMetadata: {
+											bvid: t.bvid,
+											isMultiPage: t.isMultiPage,
+											cid: t.cid ?? null,
+											mainTrackTitle: t.mainTrackTitle,
+											videoIsValid: t.videoIsValid,
+										},
+										coverUrl: t.coverUrl,
+										duration: t.duration,
+										artistId:
+											t.artistId ??
+											artistsMap.value.get(String(t.upperMid))?.id,
+									})),
+								)
+						: Array.from(addedTracksMetadata).map((v) => ({
+								title: v.title,
+								source: 'bilibili' as const,
+								bilibiliMetadata: {
+									bvid: v.bvid,
+									isMultiPage: false,
+									cid: null,
+									videoIsValid: v.attr === 0,
+								},
+								coverUrl: v.cover,
+								duration: v.duration,
+								artistId: artistsMap.value.get(String(v.upper.mid))?.id,
+							}))
 
 					const trackPayloadsWithKeysResult = Result.combine(
 						addedTrackPayloads.map((p) =>
@@ -755,18 +1033,34 @@ export class SyncBilibiliPlaylistFacade {
 
 					// 在这里我们使用清洗过后的 afterRemovedHiddenBvidsAllBvids，而非原始的 bilibiliFavoriteListAllBvids
 					// 因为在原始数据中，可能存在隐藏的视频，但是在清洗后，这些视频已经被删除了
-					const orderedUniqueKeysResult = Result.combine(
-						Array.from(afterRemovedHiddenBvidsAllBvids).map((bvid) =>
-							generateUniqueTrackKey({
-								source: 'bilibili',
-								bilibiliMetadata: {
-									bvid: bvid,
-									isMultiPage: false,
-									videoIsValid: true,
-								},
-							}),
-						),
-					)
+					const orderedUniqueKeysResult = expandedTracksMap
+						? Result.combine(
+								Array.from(afterRemovedHiddenBvidsAllBvids).flatMap((bvid) =>
+									(expandedTracksMap.get(bvid) ?? []).map((t) =>
+										generateUniqueTrackKey({
+											source: 'bilibili',
+											bilibiliMetadata: {
+												bvid: t.bvid,
+												isMultiPage: t.isMultiPage,
+												cid: t.cid ?? undefined,
+												videoIsValid: true,
+											},
+										}),
+									),
+								),
+							)
+						: Result.combine(
+								Array.from(afterRemovedHiddenBvidsAllBvids).map((bvid) =>
+									generateUniqueTrackKey({
+										source: 'bilibili',
+										bilibiliMetadata: {
+											bvid: bvid,
+											isMultiPage: false,
+											videoIsValid: true,
+										},
+									}),
+								),
+							)
 					if (orderedUniqueKeysResult.isErr()) {
 						throw orderedUniqueKeysResult.error
 					}
@@ -806,7 +1100,7 @@ export class SyncBilibiliPlaylistFacade {
 					})
 
 					const replaceResult = await playlistSvc.replacePlaylistAllTracks(
-						localPlaylist.value.id,
+						playlistResult.value.id,
 						finalOrderedTrackIds,
 					)
 					if (replaceResult.isErr()) {
@@ -815,7 +1109,7 @@ export class SyncBilibiliPlaylistFacade {
 					logger.debug('step 11: 替换 playlist 中所有 tracks 完成')
 					logger.info('同步收藏夹完成', {
 						remoteId: favoriteId,
-						playlistId: localPlaylist.value.id,
+						playlistId: playlistResult.value.id,
 					})
 
 					void analyticsService.logPlaylistSync(
@@ -824,7 +1118,7 @@ export class SyncBilibiliPlaylistFacade {
 						finalOrderedTrackIds.length,
 					)
 
-					return localPlaylist.value.id
+					return playlistResult.value.id
 				}),
 				(e) =>
 					createFacadeError('SyncFavoriteFailed', '同步收藏夹失败', {
@@ -844,16 +1138,18 @@ export class SyncBilibiliPlaylistFacade {
 	 * 根据传入的同步 ID 和类型同步播放列表
 	 * @param remoteSyncId 远程同步 ID
 	 * @param type 播放列表类型
+	 * @param expandMultiPage 是否展开分 P 视频
 	 * @returns
 	 */
 	public sync(
 		remoteSyncId: number,
 		type: Playlist['type'],
 		onProgress?: (progress: FavoriteSyncProgress) => void,
+		expandMultiPage = false,
 	) {
 		switch (type) {
 			case 'favorite': {
-				return this.syncFavorite(remoteSyncId, onProgress)
+				return this.syncFavorite(remoteSyncId, onProgress, expandMultiPage)
 			}
 			case 'collection': {
 				return this.syncCollection(remoteSyncId)
@@ -876,9 +1172,9 @@ export class SyncBilibiliPlaylistFacade {
 }
 
 export const syncFacade = new SyncBilibiliPlaylistFacade(
-	trackService,
-	bilibiliApi,
-	playlistService,
-	artistService,
-	db,
+	trackServiceInstance,
+	bilibiliApiInstance,
+	playlistServiceInstance,
+	artistServiceInstance,
+	defaultDb,
 )

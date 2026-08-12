@@ -24,7 +24,12 @@ import {
 import { authMiddleware } from '../middleware/auth'
 import { databaseMiddleware } from '../middleware/database'
 import type { DatabaseVariables } from '../middleware/database'
-import type { ChangeEvent, JwtTokenPayload, TrackInput } from '../types'
+import type {
+	ChangeEvent,
+	JwtTokenPayload,
+	TrackInput,
+	WorkerBindings,
+} from '../types'
 import {
 	createPlaylistRequestSchema,
 	getPlaylistChangesRequestSchema,
@@ -45,7 +50,7 @@ const validationHook: Parameters<typeof arktypeValidator>[2] = (result, c) => {
 const PLAYLIST_PREVIEW_LIMIT = 30
 
 type HonoEnv = {
-	Bindings: Env
+	Bindings: WorkerBindings
 	Variables: { jwtPayload: JwtTokenPayload } & DatabaseVariables
 }
 
@@ -141,7 +146,7 @@ const playlistsRoute = new Hono<HonoEnv>()
 				cover_url: playlist.coverUrl,
 				created_at: playlist.createdAt.getTime(),
 				updated_at: playlist.updatedAt.getTime(),
-				track_count: Number(trackCount ?? 0),
+				track_count: trackCount ?? 0,
 			},
 			owner: owner
 				? {
@@ -253,9 +258,9 @@ const playlistsRoute = new Hono<HonoEnv>()
 				(a, b) => a.operation_at - b.operation_at,
 			)
 
-			const upsertChanges = sorted.filter((c) => c.op === 'upsert')
-			const removeChanges = sorted.filter((c) => c.op === 'remove')
-			const reorderChanges = sorted.filter((c) => c.op === 'reorder')
+			const upsertChanges = sorted.filter((ch) => ch.op === 'upsert')
+			const removeChanges = sorted.filter((ch) => ch.op === 'remove')
+			const reorderChanges = sorted.filter((ch) => ch.op === 'reorder')
 
 			await db.transaction(async (tx) => {
 				// 1. 批量 upsert shared_tracks（资源池）
@@ -263,15 +268,15 @@ const playlistsRoute = new Hono<HonoEnv>()
 					await tx
 						.insert(sharedTracks)
 						.values(
-							upsertChanges.map((c) => ({
-								uniqueKey: c.track.unique_key,
-								title: c.track.title,
-								artistName: c.track.artist_name,
-								artistId: c.track.artist_id,
-								coverUrl: c.track.cover_url,
-								duration: c.track.duration,
-								bilibiliBvid: c.track.bilibili_bvid,
-								bilibiliCid: c.track.bilibili_cid,
+							upsertChanges.map((ch) => ({
+								uniqueKey: ch.track.unique_key,
+								title: ch.track.title,
+								artistName: ch.track.artist_name,
+								artistId: ch.track.artist_id,
+								coverUrl: ch.track.cover_url,
+								duration: ch.track.duration,
+								bilibiliBvid: ch.track.bilibili_bvid,
+								bilibiliCid: ch.track.bilibili_cid,
 							})),
 						)
 						.onConflictDoUpdate({
@@ -288,12 +293,12 @@ const playlistsRoute = new Hono<HonoEnv>()
 					await tx
 						.insert(sharedPlaylistTracks)
 						.values(
-							upsertChanges.map((c) => ({
+							upsertChanges.map((ch) => ({
 								playlistId,
-								trackUniqueKey: c.track.unique_key,
-								sortKey: c.sort_key,
+								trackUniqueKey: ch.track.unique_key,
+								sortKey: ch.sort_key,
 								addedByUserId: userId,
-								updatedAt: new Date(c.operation_at),
+								updatedAt: new Date(ch.operation_at),
 								deletedAt: null,
 							})),
 						)

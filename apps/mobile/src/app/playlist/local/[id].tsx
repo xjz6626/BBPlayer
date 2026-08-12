@@ -4,6 +4,7 @@ import type { TrueSheet } from '@lodev09/react-native-true-sheet'
 import { and, eq } from 'drizzle-orm'
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite'
 import { useImage } from 'expo-image'
+import { useObserve } from 'expo-observe'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { StyleSheet, View } from 'react-native'
@@ -153,6 +154,11 @@ export default function LocalPlaylistPage() {
 	const theme = useTheme()
 	const { colors } = theme
 	const router = useRouter()
+	const { markInteractive } = useObserve()
+
+	useEffect(() => {
+		markInteractive()
+	}, [markInteractive])
 	const bbplayerToken = useAppStore((state) => state.bbplayerToken)
 	const [searchQuery, setSearchQuery] = useState('')
 	const [startSearch, setStartSearch] = useState(false)
@@ -339,11 +345,18 @@ export default function LocalPlaylistPage() {
 		}
 
 		if (playlistMetadata.type === 'favorite') {
+			const { expandMultiPageOnSync } = useAppStore.getState().settings
+			if (expandMultiPageOnSync === null) {
+				openModal('SyncOptions', {
+					favoriteId: playlistMetadata.remoteSyncId,
+				})
+				return
+			}
 			openModal(
 				'FavoriteSyncProgress',
 				{
-					favoriteId: Number(playlistMetadata.remoteSyncId),
-					shouldRedirectToLocalPlaylist: false,
+					favoriteId: playlistMetadata.remoteSyncId,
+					expandMultiPage: expandMultiPageOnSync,
 				},
 				{ dismissible: false },
 			)

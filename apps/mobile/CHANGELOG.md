@@ -5,7 +5,12 @@
 项目的 CHANGELOG 格式符合 [Keep a Changelog]，
 且版本号遵循 [Semantic Versioning]。 ~~(然而，事实上遵循的是 [Pride Versioning])~~
 
-## [2.6.4]
+## [2.6.4] - 2026-08-08
+
+### Added
+
+- 支持同步收藏夹时展开所有分 p 视频
+- 使用 `react-native-plain-text` 优化列表性能
 
 ### Fixed
 
@@ -13,6 +18,7 @@
 - 「近期歌单」忽略动态合并歌单
 - 修复歌词页面无法点击菜单按钮的问题
 - 修复主题无法下载的问题
+- 修复播放器页面不响应宽高变化的问题
 
 ## [2.6.2] - 2026-07-13
 
@@ -582,7 +588,7 @@
 
 <!-- Versions -->
 
-[unreleased]: https://github.com/bbplayer-app/BBPlayer/compare/v2.6.2...HEAD
+[unreleased]: https://github.com/bbplayer-app/BBPlayer/compare/v2.6.4...HEAD
 [1.3.2]: https://github.com/bbplayer-app/BBPlayer/compare/v1.3.1...v1.3.2
 [1.3.3]: https://github.com/bbplayer-app/BBPlayer/compare/v1.3.2...v1.3.3
 [1.3.4]: https://github.com/bbplayer-app/BBPlayer/compare/v1.3.3...v1.3.4
@@ -610,3 +616,4 @@
 [2.6.0]: https://github.com/bbplayer-app/BBPlayer/compare/v2.5.2...v2.6.0
 [2.6.1]: https://github.com/bbplayer-app/BBPlayer/compare/v2.6.0...v2.6.1
 [2.6.2]: https://github.com/bbplayer-app/BBPlayer/compare/v2.6.1...v2.6.2
+[2.6.4]: https://github.com/bbplayer-app/BBPlayer/compare/v2.6.2...v2.6.4

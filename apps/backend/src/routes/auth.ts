@@ -6,6 +6,7 @@ import { sign } from 'hono/jwt'
 import { createDb } from '../db'
 import { users } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
+import type { WorkerBindings } from '../types'
 import {
 	loginRequestSchema,
 	registerRequestSchema,
@@ -21,7 +22,7 @@ type AuthVariables = {
 }
 
 const authRoute = new Hono<{
-	Bindings: Env
+	Bindings: WorkerBindings
 	Variables: AuthVariables
 }>()
 	.post(

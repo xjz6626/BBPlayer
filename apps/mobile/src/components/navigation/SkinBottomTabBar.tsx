@@ -2,13 +2,7 @@ import type { BottomTabBarProps } from '@bottom-tabs/react-navigation'
 import { Image as ExpoImage } from 'expo-image'
 import { CommonActions } from 'expo-router/react-navigation'
 import { memo } from 'react'
-import {
-	Image,
-	type ImageSourcePropType,
-	Pressable,
-	StyleSheet,
-	View,
-} from 'react-native'
+import { Image, Pressable, StyleSheet, View } from 'react-native'
 import { Text } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
@@ -101,7 +95,7 @@ const SkinBottomTabBar = memo(function SkinBottomTabBar({
 								<View style={styles.iconContainer}>
 									{icon && !(typeof icon === 'object' && 'sfSymbol' in icon) ? (
 										<Image
-											source={icon as ImageSourcePropType}
+											source={icon}
 											resizeMode='contain'
 											style={[
 												styles.icon,

@@ -85,15 +85,15 @@ export const usePlayHistoryByDate = (dateStr: string) => {
 			const range = getPlayHistoryTimestampRange(startTimeMs, endTimeMs)
 
 			const historyRows = await drizzleDb.query.playHistory.findMany({
-				where: (ph, { and, gte, lt, or }) =>
-					or(
-						and(
-							gte(ph.startTime, range.startTimeMs),
-							lt(ph.startTime, range.endTimeMs),
+				where: (ph, { and: andFn, gte: gteFn, lt: ltFn, or: orFn }) =>
+					orFn(
+						andFn(
+							gteFn(ph.startTime, range.startTimeMs),
+							ltFn(ph.startTime, range.endTimeMs),
 						),
-						and(
-							gte(ph.startTime, range.startTimeSeconds),
-							lt(ph.startTime, range.endTimeSeconds),
+						andFn(
+							gteFn(ph.startTime, range.startTimeSeconds),
+							ltFn(ph.startTime, range.endTimeSeconds),
 						),
 					),
 				with: {

@@ -12,23 +12,25 @@ import type { FavoriteSyncProgress } from '@/lib/facades/syncBilibiliPlaylist'
 const FavoriteSyncProgressModal = memo(function FavoriteSyncProgressModal({
 	favoriteId,
 	shouldRedirectToLocalPlaylist,
+	expandMultiPage,
 }: {
 	favoriteId: number
 	shouldRedirectToLocalPlaylist?: boolean
+	expandMultiPage?: boolean
 }) {
-	const _close = useModalStore((state) => state.close)
+	const modalClose = useModalStore((state) => state.close)
 	const router = useRouter()
 	const syncedPlaylistId = useRef<number | undefined>(undefined)
 
 	const close = useCallback(() => {
-		_close('FavoriteSyncProgress')
+		modalClose('FavoriteSyncProgress')
 		if (shouldRedirectToLocalPlaylist && syncedPlaylistId.current) {
 			const targetId = syncedPlaylistId.current
 			useModalStore.getState().doAfterModalHostClosed(() => {
 				router.push(`/playlist/local/${targetId}`)
 			})
 		}
-	}, [_close, shouldRedirectToLocalPlaylist, router])
+	}, [modalClose, shouldRedirectToLocalPlaylist, router])
 
 	const [progress, setProgress] = useState<FavoriteSyncProgress | null>(null)
 	const { mutate: syncFavorite, isPending } = usePlaylistSync()
@@ -44,6 +46,7 @@ const FavoriteSyncProgressModal = memo(function FavoriteSyncProgressModal({
 				remoteSyncId: favoriteId,
 				type: 'favorite',
 				onProgress: setProgress,
+				expandMultiPage,
 			},
 			{
 				onSuccess: (id) => {
@@ -65,7 +68,7 @@ const FavoriteSyncProgressModal = memo(function FavoriteSyncProgressModal({
 				},
 			},
 		)
-	}, [favoriteId, syncFavorite])
+	}, [favoriteId, syncFavorite, expandMultiPage])
 
 	let localProgress: number | undefined
 	if (

@@ -5,6 +5,7 @@ import dayjs from 'dayjs'
 import { eq } from 'drizzle-orm'
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite'
 import { Image } from 'expo-image'
+import { useObserve } from 'expo-observe'
 import { useRouter } from 'expo-router'
 import { useIncomingShare } from 'expo-sharing'
 import {
@@ -118,6 +119,12 @@ function HomePage() {
 			new Map(items.map((item) => [item.detail.bvid, item])).values(),
 		).slice(0, 8)
 	}, [recommendationData])
+
+	const { markInteractive } = useObserve()
+
+	useEffect(() => {
+		markInteractive()
+	}, [markInteractive])
 
 	const greeting = getGreetingMsg()
 
@@ -320,7 +327,7 @@ function HomePage() {
 						)}
 						<Touchable
 							androidRipple={{}}
-							onPress={() => router.push('/settings/bilibili-account' as never)}
+							onPress={() => router.push('/settings/bilibili-account')}
 							style={styles.avatarButton}
 						>
 							<Image

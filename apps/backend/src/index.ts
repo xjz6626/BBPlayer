@@ -4,21 +4,25 @@ import { cors } from 'hono/cors'
 import authRoute from './routes/auth'
 import meRoute from './routes/me'
 import playlistsRoute from './routes/playlists'
+import type { WorkerBindings } from './types'
 
-const healthRoute = new Hono<{ Bindings: Env }>().get('/', (c) =>
+const healthRoute = new Hono<{ Bindings: WorkerBindings }>().get('/', (c) =>
 	c.json({ status: 'ok', timestamp: Date.now() }),
 )
 
-const updateRoute = new Hono<{ Bindings: Env }>().get('/', async (c) => {
-	const manifest = await c.env.KV.get('update_json')
-	if (!manifest) {
-		return c.json({ error: 'Manifest not found' }, 404)
-	}
-	// manifest 应该是 JSON 字符串，直接返回并设置 content-type
-	return c.text(manifest, { headers: { 'Content-Type': 'application/json' } })
-})
+const updateRoute = new Hono<{ Bindings: WorkerBindings }>().get(
+	'/',
+	async (c) => {
+		const manifest = await c.env.KV.get('update_json')
+		if (!manifest) {
+			return c.json({ error: 'Manifest not found' }, 404)
+		}
+		// manifest 应该是 JSON 字符串，直接返回并设置 content-type
+		return c.text(manifest, { headers: { 'Content-Type': 'application/json' } })
+	},
+)
 
-const app = new Hono<{ Bindings: Env }>()
+const app = new Hono<{ Bindings: WorkerBindings }>()
 	// .use('*', logger())
 	.use(
 		'*',

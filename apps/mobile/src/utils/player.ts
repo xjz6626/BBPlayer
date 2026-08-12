@@ -273,6 +273,5 @@ export {
 	addToQueue,
 	convertToOrpheusTrack,
 	finalizeAndRecordCurrentTrack,
-	getInternalPlayUri,
 	reportPlaybackHistory,
 }

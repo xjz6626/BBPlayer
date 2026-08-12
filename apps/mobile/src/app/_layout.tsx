@@ -1,13 +1,13 @@
 import { Orpheus } from '@bbplayer/orpheus'
 import {
-	fetch as fetchNetInfo,
 	addEventListener as addNetInfoEventListener,
+	fetch as fetchNetInfo,
 } from '@react-native-community/netinfo'
 import * as Sentry from '@sentry/react-native'
 import { focusManager, onlineManager } from '@tanstack/react-query'
 import * as Application from 'expo-application'
-import { ObserveRoot, useObserve } from 'expo-observe'
-import { Stack, router } from 'expo-router'
+import { Observe, ObserveRoot, useObserve } from 'expo-observe'
+import { router, Stack } from 'expo-router'
 import { useEffect, useState } from 'react'
 import type { AppStateStatus } from 'react-native'
 import { AppState, Platform, StyleSheet, View } from 'react-native'
@@ -39,6 +39,10 @@ import migrations from '../../drizzle/migrations'
 
 const logger = log.extend('UI.RootLayout')
 
+Observe.configure({
+	integrations: { 'expo-router': true },
+})
+
 // 初始化 Sentry
 initializeSentry()
 
@@ -48,6 +52,28 @@ function onAppStateChange(status: AppStateStatus) {
 	}
 	if (Platform.OS === 'android') {
 		Orpheus.setAppForeground(status === 'active')
+	}
+}
+
+const checkOverlayPermissionOnStart = async () => {
+	if (Orpheus.isDesktopLyricsShown) {
+		const hasPermission = await Orpheus.checkOverlayPermission()
+		if (!hasPermission) {
+			// 延迟显示，确保 UI 已经加载
+			setTimeout(() => {
+				alert(
+					'桌面歌词',
+					'检测到桌面歌词已开启，但缺少悬浮窗权限，请授权以恢复显示。',
+					[
+						{ text: '取消' },
+						{
+							text: '去授权',
+							onPress: () => Orpheus.requestOverlayPermission(),
+						},
+					],
+				)
+			}, 1000)
+		}
 	}
 }
 
@@ -64,10 +90,9 @@ function RootLayout() {
 			setOnline(!isActuallyOffline(state))
 		})
 
-		const unsubscribe = addNetInfoEventListener((state) => {
+		return addNetInfoEventListener((state) => {
 			setOnline(!isActuallyOffline(state))
 		})
-		return unsubscribe
 	})
 
 	useEffect(() => {
@@ -114,27 +139,6 @@ function RootLayout() {
 			initPlayerQueueStore()
 
 			// 桌面歌词权限启动检查
-			const checkOverlayPermissionOnStart = async () => {
-				if (Orpheus.isDesktopLyricsShown) {
-					const hasPermission = await Orpheus.checkOverlayPermission()
-					if (!hasPermission) {
-						// 延迟显示，确保 UI 已经加载
-						setTimeout(() => {
-							alert(
-								'桌面歌词',
-								'检测到桌面歌词已开启，但缺少悬浮窗权限，请授权以恢复显示。',
-								[
-									{ text: '取消' },
-									{
-										text: '去授权',
-										onPress: () => Orpheus.requestOverlayPermission(),
-									},
-								],
-							)
-						}, 1000)
-					}
-				}
-			}
 			void checkOverlayPermissionOnStart()
 
 			// 初始化播放器 Cookie

@@ -5,7 +5,7 @@ import { playlistMembers, sharedPlaylists } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
 import { databaseMiddleware } from '../middleware/database'
 import type { DatabaseVariables } from '../middleware/database'
-import type { JwtTokenPayload } from '../types'
+import type { JwtTokenPayload, WorkerBindings } from '../types'
 
 /**
  * GET /api/me/playlists
@@ -13,7 +13,7 @@ import type { JwtTokenPayload } from '../types'
  * 用于换设备后的全量恢复入口。
  */
 const meRoute = new Hono<{
-	Bindings: Env
+	Bindings: WorkerBindings
 	Variables: { jwtPayload: JwtTokenPayload } & DatabaseVariables
 }>()
 	.use('*', authMiddleware)
