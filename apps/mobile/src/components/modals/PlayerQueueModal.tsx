@@ -19,12 +19,18 @@ import { GestureHandlerRootView, Touchable } from 'react-native-gesture-handler'
 import { Surface, Text, useTheme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
+import Button from '@/components/common/Button'
 import IconButton from '@/components/common/IconButton'
+import { useBatchAddToDefaultFavorite } from '@/hooks/mutations/bilibili/favorite'
 import useCurrentTrackId from '@/hooks/player/useCurrentTrackId'
 import { useIsCurrentTrack } from '@/hooks/player/useIsCurrentTrack'
+import { usePersonalInformation } from '@/hooks/queries/bilibili/user'
+import useAppStore from '@/hooks/stores/useAppStore'
 import { useModalStore } from '@/hooks/stores/useModalStore'
 import { usePlayerQueueSheetStore } from '@/hooks/stores/usePlayerQueueSheetStore'
 import { usePlayerQueueStore } from '@/hooks/stores/usePlayerQueueStore'
+import { toastAndLogError } from '@/utils/error-handling'
+import toast from '@/utils/toast'
 
 const TrackItem = memo(
 	({
@@ -110,9 +116,27 @@ function PlayerQueueModal({ sheetRef, ...props }: PlayerQueueModalProps) {
 	const currentTrackId = useCurrentTrackId()
 	const theme = useTheme()
 	const [didInitialScroll, setDidInitialScroll] = useState(false)
+	const [isClearing, setIsClearing] = useState(false)
+	const [isSaving, setIsSaving] = useState(false)
 	const flatListRef = useRef<LegendListRef>(null)
 
 	const queue = usePlayerQueueStore((state) => state.tracks)
+	const hasBilibiliCookie = useAppStore((state) => state.hasBilibiliCookie())
+	const { data: personalInformation } = usePersonalInformation()
+	const { mutate: batchAddToDefaultFavorite, isPending: isFavoriting } =
+		useBatchAddToDefaultFavorite()
+	const queueBvids = useMemo(
+		() =>
+			Array.from(
+				new Set(
+					queue.flatMap((track) => {
+						const [source, bvid] = track.id.split('::')
+						return source === 'bilibili' && bvid ? [bvid] : []
+					}),
+				),
+			),
+		[queue],
+	)
 
 	const currentIndex = useMemo(() => {
 		if (!currentTrackId) return -1
@@ -135,6 +159,60 @@ function PlayerQueueModal({ sheetRef, ...props }: PlayerQueueModalProps) {
 	const removeTrackHandler = useCallback(async (index: number) => {
 		await Orpheus.removeTrack(index)
 	}, [])
+
+	const clearQueueHandler = useCallback(async () => {
+		if (queue.length === 0 || isClearing) return
+
+		setIsClearing(true)
+		try {
+			await Orpheus.clear()
+		} catch (error) {
+			toastAndLogError('清空播放队列失败', error, 'UI.Modal.PlayerQueue')
+		} finally {
+			setIsClearing(false)
+		}
+	}, [isClearing, queue.length])
+
+	const favoriteQueueHandler = useCallback(() => {
+		if (queueBvids.length === 0) {
+			toast.info('队列中没有可收藏的 Bilibili 视频')
+			return
+		}
+		if (!hasBilibiliCookie || !personalInformation?.mid) {
+			toast.info('请先登录 B 站账号')
+			return
+		}
+
+		batchAddToDefaultFavorite({
+			bvids: queueBvids,
+			userMid: personalInformation.mid,
+		})
+	}, [
+		batchAddToDefaultFavorite,
+		hasBilibiliCookie,
+		personalInformation?.mid,
+		queueBvids,
+	])
+
+	const saveQueueHandler = useCallback(async () => {
+		if (queue.length === 0 || isSaving) return
+
+		setIsSaving(true)
+		const tracks = [...queue]
+		try {
+			// Wait for the sheet's dismissal animation before presenting the naming dialog.
+			await TrueSheet.dismiss('playerQueueModal')
+			useModalStore.getState().open('SaveQueueToPlaylist', { tracks })
+		} catch (error) {
+			toastAndLogError(
+				'打开保存播放队列窗口失败',
+				error,
+				'UI.Modal.PlayerQueue',
+			)
+		} finally {
+			setIsSaving(false)
+		}
+	}, [isSaving, queue])
 
 	const keyExtractor = useCallback((item: OrpheusTrack) => item.id, [])
 
@@ -196,17 +274,44 @@ function PlayerQueueModal({ sheetRef, ...props }: PlayerQueueModalProps) {
 						}}
 					>
 						<Text variant='titleMedium'>播放队列 ({queue.length})</Text>
-						<IconButton
-							icon='content-save-outline'
-							onPress={() => {
-								if (queue.length > 0) {
-									useModalStore.getState().open('SaveQueueToPlaylist', {
-										tracks: queue,
-									})
+						<View
+							style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+						>
+							<Button
+								compact
+								icon='trash-can-outline'
+								textColor={theme.colors.error}
+								onPress={() => void clearQueueHandler()}
+								disabled={
+									queue.length === 0 || isClearing || isFavoriting || isSaving
 								}
-							}}
-							disabled={queue.length === 0}
-						/>
+								loading={isClearing}
+								testID='player-queue-clear'
+							>
+								清空
+							</Button>
+							<Button
+								compact
+								icon='star-outline'
+								onPress={favoriteQueueHandler}
+								disabled={
+									queue.length === 0 || isClearing || isFavoriting || isSaving
+								}
+								loading={isFavoriting}
+								testID='player-queue-favorite'
+							>
+								收藏
+							</Button>
+							<IconButton
+								icon='content-save-outline'
+								onPress={() => void saveQueueHandler()}
+								disabled={
+									queue.length === 0 || isClearing || isFavoriting || isSaving
+								}
+								loading={isSaving}
+								testID='player-queue-save'
+							/>
+						</View>
 					</View>
 					<View style={{ flex: 1, minHeight: 2 }}>
 						<LegendList
