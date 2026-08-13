@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { favoriteListQueryKeys } from '@/hooks/queries/bilibili/favorite'
 import { bilibiliApi } from '@/lib/api/bilibili/api'
 import { BilibiliApiError } from '@/lib/errors/thirdparty/bilibili'
+import { syncLocalToBilibiliService } from '@/lib/services/syncLocalToBilibiliService'
 import { toastAndLogError } from '@/utils/error-handling'
 import log from '@/utils/log'
 import { returnOrThrowAsync } from '@/utils/neverthrow-utils'
@@ -159,6 +160,85 @@ export const useAddToDefaultFavorite = () => {
 			await queryClient.invalidateQueries({
 				queryKey: [...favoriteListQueryKeys.all, 'favoriteForOneVideo', bvid],
 			})
+		},
+	})
+}
+
+/**
+ * 将多个视频添加到登录用户的默认收藏夹。
+ * 重复或已在收藏夹中的视频会被跳过。
+ */
+export const useBatchAddToDefaultFavorite = () => {
+	const queryClient = useQueryClient()
+
+	return useMutation({
+		mutationFn: async ({
+			bvids,
+			userMid,
+		}: {
+			bvids: string[]
+			userMid: number
+		}) => {
+			const uniqueBvids = Array.from(new Set(bvids))
+			const folders = await returnOrThrowAsync(
+				bilibiliApi.getFavoritePlaylists({ userMid }),
+			)
+			const defaultFolder =
+				folders.find((folder) => ((folder.attr ?? 0) >> 1) % 2 === 0) ??
+				folders[0]
+			if (!defaultFolder) throw new Error('还没有可用的收藏夹')
+
+			const favoriteContents = await returnOrThrowAsync(
+				bilibiliApi.getFavoriteListAllContents({
+					favoriteId: defaultFolder.id,
+				}),
+			)
+			const existingBvids = new Set(favoriteContents.map((item) => item.bvid))
+			const bvidsToAdd = uniqueBvids.filter((bvid) => !existingBvids.has(bvid))
+
+			const batchResult = await syncLocalToBilibiliService.executeBatchAdd(
+				defaultFolder.id,
+				bvidsToAdd,
+			)
+			if (batchResult.isErr()) throw batchResult.error
+
+			const failedCount = batchResult.value
+			return {
+				folderTitle: defaultFolder.title,
+				totalCount: uniqueBvids.length,
+				alreadyFavoriteCount: uniqueBvids.length - bvidsToAdd.length,
+				successCount: bvidsToAdd.length - failedCount,
+				failedCount,
+			}
+		},
+		onSuccess: async ({
+			folderTitle,
+			totalCount,
+			alreadyFavoriteCount,
+			successCount,
+			failedCount,
+		}) => {
+			if (failedCount > 0) {
+				toast.info('批量收藏完成，但有部分视频失败', {
+					description: `成功 ${successCount} 个，失败 ${failedCount} 个`,
+				})
+			} else if (alreadyFavoriteCount === totalCount) {
+				toast.success(`队列中的视频都已在「${folderTitle}」中`)
+			} else {
+				toast.success(`已收藏 ${successCount} 个视频到「${folderTitle}」`, {
+					description:
+						alreadyFavoriteCount > 0
+							? `${alreadyFavoriteCount} 个视频已在收藏夹中，已跳过`
+							: undefined,
+				})
+			}
+
+			await queryClient.invalidateQueries({
+				queryKey: favoriteListQueryKeys.all,
+			})
+		},
+		onError: (error) => {
+			toastAndLogError('批量收藏失败', error, 'Mutation.Bilibili.Favorite')
 		},
 	})
 }
