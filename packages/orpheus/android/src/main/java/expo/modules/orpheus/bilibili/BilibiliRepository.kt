@@ -12,6 +12,8 @@ import java.util.concurrent.ConcurrentHashMap
 object BilibiliRepository {
     val TAG = "Orpheus/BilibiliRepo"
 
+    private const val VIDEO_NOT_FOUND_CODE = -404
+
     private val api: BilibiliApi by lazy {
         NetworkModule.retrofit.create(BilibiliApi::class.java)
     }
@@ -131,26 +133,41 @@ object BilibiliRepository {
 
         Log.d(TAG, "resolve url: bvid=$bvid, cid=$cidInternal, enableDolby=$enableDolby, enableHiRes=$enableHiRes")
 
-        val rawParams = mapOf(
-            "bvid" to bvid,
-            "cid" to cidInternal,
-            "fnval" to 4048,
-            "fnver" to 0,
-            "fourk" to 1,
-            "qlt" to audioQuality,
-            "voice_balance" to 1
+        var apiResponse = getPlayUrl(
+            bvid = bvid,
+            cid = cidInternal,
+            audioQuality = audioQuality,
+            cookie = cookie,
+            imgKey = imgKey,
+            subKey = subKey
         )
 
-        val signedParams = WbiUtil.sign(rawParams, imgKey, subKey)
+        // UP 主替换已发布稿件的视频源后，BV 号不变，但 CID 会失效。
+        // 单 P 稿件可以安全地刷新到唯一的新 CID；无 CID 的普通视频仍取第一 P。
+        if (apiResponse?.code == VIDEO_NOT_FOUND_CODE) {
+            val refreshedCid = runCatching {
+                refreshStaleCid(bvid, cid, cookie)
+            }.onFailure { error ->
+                Log.w(TAG, "failed to refresh stale cid: bvid=$bvid, cid=$cidInternal", error)
+            }.getOrNull()
 
-        val call = api.getPlayUrl(cookie, signedParams)
-        val response = call.execute()
-
-        if (!response.isSuccessful) {
-            throw IOException("Bilibili API Http Error: ${response.code()}")
+            if (refreshedCid != null && refreshedCid != cidInternal) {
+                Log.i(
+                    TAG,
+                    "retry playurl with refreshed cid: bvid=$bvid, oldCid=$cidInternal, newCid=$refreshedCid"
+                )
+                cidInternal = refreshedCid
+                apiResponse = getPlayUrl(
+                    bvid = bvid,
+                    cid = cidInternal,
+                    audioQuality = audioQuality,
+                    cookie = cookie,
+                    imgKey = imgKey,
+                    subKey = subKey
+                )
+            }
         }
 
-        val apiResponse = response.body()
         if (apiResponse?.code != 0) {
             val msg = apiResponse?.message ?: "Unknown Error"
             throw IOException("Bilibili API Error: code=${apiResponse?.code} msg=$msg")
@@ -197,7 +214,52 @@ object BilibiliRepository {
         return resolvedUrl to volume
     }
 
+    private fun getPlayUrl(
+        bvid: String,
+        cid: Long,
+        audioQuality: Int,
+        cookie: String?,
+        imgKey: String,
+        subKey: String
+    ): BilibiliApiResponse<BilibiliAudioStreamResponse>? {
+        val rawParams = mapOf(
+            "bvid" to bvid,
+            "cid" to cid,
+            "fnval" to 4048,
+            "fnver" to 0,
+            "fourk" to 1,
+            "qlt" to audioQuality,
+            "voice_balance" to 1
+        )
+        val signedParams = WbiUtil.sign(rawParams, imgKey, subKey)
+        val response = api.getPlayUrl(cookie, signedParams).execute()
+
+        if (!response.isSuccessful) {
+            throw IOException("Bilibili API Http Error: ${response.code()}")
+        }
+        return response.body()
+    }
+
+    private fun refreshStaleCid(bvid: String, requestedCid: Long?, cookie: String?): Long? {
+        val pageCids = getPageCids(bvid, cookie)
+        val refreshedCid = if (requestedCid == null) {
+            pageCids.firstOrNull()
+        } else {
+            // 多 P 稿件无法仅凭旧 CID 确定被替换的是哪一 P，不能冒险播放错误分 P。
+            pageCids.singleOrNull()
+        }
+        refreshedCid?.let { BilibiliPlaybackCache.putCid(bvid, it) }
+        return refreshedCid
+    }
+
     fun getFirstCid(bvid: String, cookie: String?): Long {
+        val cid = getPageCids(bvid, cookie).firstOrNull()
+            ?: throw IOException("Bilibili API Logic Error: page list is empty for bvid=$bvid")
+        BilibiliPlaybackCache.putCid(bvid, cid)
+        return cid
+    }
+
+    private fun getPageCids(bvid: String, cookie: String?): List<Long> {
         val call = api.getPageList(cookie = cookie, bvid = bvid)
         val response = call.execute()
 
@@ -214,10 +276,6 @@ object BilibiliRepository {
         if (apiResponse.data == null) {
             throw IOException("Bilibili API Logic Error: code=0 msg=${apiResponse.message} but data is missing")
         }
-
-        val cid = apiResponse.data.firstOrNull()?.cid
-            ?: throw IOException("Bilibili API Logic Error: page list is empty for bvid=$bvid")
-        BilibiliPlaybackCache.putCid(bvid, cid)
-        return cid
+        return apiResponse.data.map { it.cid }
     }
 }

@@ -115,9 +115,9 @@ internal object BilibiliPlaybackCache {
         )
         saveResolution(requestedKey, resolution)
 
-        // A normal video is requested without a cid, while another call site may already know it.
-        // Store both aliases so both paths reuse the same resolved URL.
-        if (requestedCid == null) {
+        // A normal video may be requested without a cid, or a source replacement may make the
+        // requested cid stale. Store the resolved alias so every path reuses the refreshed URL.
+        if (requestedCid == null || requestedCid != resolvedCid) {
             val resolvedKey = resolutionKey(
                 bvid,
                 resolvedCid,
