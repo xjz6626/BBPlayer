@@ -10,6 +10,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
@@ -76,6 +77,13 @@ class OrpheusMusicService : MediaLibraryService() {
     lateinit var lyricsManager: UnifiedLyricsManager
     private var currentMediaId: String? = null
     private val json = Json { ignoreUnknownKeys = true }
+    private var playbackRecoveryAttempt = 0
+    private var playbackRecoveryMediaId: String? = null
+    private var playbackRecoveryRunnable: Runnable? = null
+
+    @Volatile
+    var isRecoveringFromPlaybackError = false
+        private set
 
     private val lyricsUpdateRunnable = object : Runnable {
         override fun run() {
@@ -326,6 +334,7 @@ class OrpheusMusicService : MediaLibraryService() {
 
     override fun onDestroy() {
         serviceHandler.removeCallbacks(lyricsUpdateRunnable)
+        clearPlaybackRecovery()
         floatingLyricsManager.hide()
         statusBarLyricsManager.onStop()
         volumeFadeJob?.cancel()
@@ -623,6 +632,7 @@ class OrpheusMusicService : MediaLibraryService() {
                 val currentPlayer = player ?: return
                 val currentItem = currentPlayer.currentMediaItem ?: return
                 if (playbackState == Player.STATE_READY) {
+                    clearPlaybackRecovery()
                     resolveDurationMs(currentItem, currentPlayer.duration)
                 } else if (playbackState == Player.STATE_ENDED) {
                     finishTrack(
@@ -633,12 +643,19 @@ class OrpheusMusicService : MediaLibraryService() {
                 }
             }
 
+            override fun onPlayerError(error: PlaybackException) {
+                schedulePlaybackRecovery(error)
+            }
+
             @OptIn(UnstableApi::class)
             override fun onMediaItemTransition(
                 mediaItem: androidx.media3.common.MediaItem?,
                 reason: Int
             ) {
                 val mediaId = mediaItem?.mediaId
+                if (mediaId != playbackRecoveryMediaId) {
+                    clearPlaybackRecovery()
+                }
                 val reasonStr = when (reason) {
                     Player.MEDIA_ITEM_TRANSITION_REASON_AUTO -> "AUTO"
                     Player.MEDIA_ITEM_TRANSITION_REASON_SEEK -> "SEEK"
@@ -705,6 +722,81 @@ class OrpheusMusicService : MediaLibraryService() {
                 }
             }
         })
+    }
+
+    private fun schedulePlaybackRecovery(error: PlaybackException) {
+        val currentPlayer = player ?: return clearPlaybackRecovery()
+        val currentItem = currentPlayer.currentMediaItem ?: return clearPlaybackRecovery()
+        val uri = currentItem.localConfiguration?.uri
+        val isBilibiliItem = uri?.scheme == "orpheus" && uri.host == "bilibili"
+        val messageChain = generateSequence<Throwable>(error) { it.cause }
+            .mapNotNull { it.message }
+            .joinToString(" | ")
+
+        if (
+            !isBilibiliItem ||
+            !currentPlayer.playWhenReady ||
+            !BilibiliPlaybackRecoveryPolicy.shouldRecover(error.errorCode, messageChain)
+        ) {
+            clearPlaybackRecovery()
+            return
+        }
+
+        val mediaId = currentItem.mediaId
+        val nextAttempt = if (playbackRecoveryMediaId == mediaId) {
+            playbackRecoveryAttempt + 1
+        } else {
+            1
+        }
+        if (nextAttempt > BilibiliPlaybackRecoveryPolicy.MAX_RECOVERY_ATTEMPTS) {
+            Log.e(
+                "OrpheusMusicService",
+                "Bilibili playback recovery exhausted: mediaId=$mediaId",
+                error
+            )
+            clearPlaybackRecovery()
+            return
+        }
+
+        playbackRecoveryAttempt = nextAttempt
+        playbackRecoveryMediaId = mediaId
+        isRecoveringFromPlaybackError = true
+        playbackRecoveryRunnable?.let(serviceHandler::removeCallbacks)
+
+        val mediaItemIndex = currentPlayer.currentMediaItemIndex
+        val positionMs = currentPlayer.currentPosition.coerceAtLeast(0L)
+        val delayMs = BilibiliPlaybackRecoveryPolicy.retryDelayMs(nextAttempt)
+        DownloadUtil.invalidateBilibiliUri(uri)
+
+        val recoveryRunnable = Runnable {
+            playbackRecoveryRunnable = null
+            val activePlayer = player
+            if (
+                activePlayer == null ||
+                activePlayer.currentMediaItem?.mediaId != mediaId ||
+                !activePlayer.playWhenReady
+            ) {
+                clearPlaybackRecovery()
+                return@Runnable
+            }
+
+            Log.w(
+                "OrpheusMusicService",
+                "Retrying Bilibili playback: mediaId=$mediaId, attempt=$nextAttempt"
+            )
+            activePlayer.seekTo(mediaItemIndex, positionMs)
+            activePlayer.prepare()
+        }
+        playbackRecoveryRunnable = recoveryRunnable
+        serviceHandler.postDelayed(recoveryRunnable, delayMs)
+    }
+
+    private fun clearPlaybackRecovery() {
+        playbackRecoveryRunnable?.let(serviceHandler::removeCallbacks)
+        playbackRecoveryRunnable = null
+        playbackRecoveryAttempt = 0
+        playbackRecoveryMediaId = null
+        isRecoveringFromPlaybackError = false
     }
 
     private fun saveCurrentQueue() {

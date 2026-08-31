@@ -48,12 +48,18 @@ object BilibiliRepository {
         }
 
         val response = api.getNavInfo().execute()
-        val wbiData = response.body()?.data?.wbiImg
-
-        if (!response.isSuccessful || wbiData == null) {
-            val msg = response.body()?.message ?: "Unknown Error"
-            throw IOException("Bilibili API Error: code=${response.code()} msg=$msg")
+        if (!response.isSuccessful) {
+            throw IOException("Bilibili API Http Error: ${response.code()}")
         }
+
+        val apiResponse = response.body()
+        if (apiResponse?.code != 0) {
+            val msg = apiResponse?.message ?: "Unknown Error"
+            throw IOException("Bilibili API Error: code=${apiResponse?.code} msg=$msg")
+        }
+
+        val wbiData = apiResponse.data?.wbiImg
+            ?: throw IOException("Bilibili API Logic Error: code=0 msg=WBI keys are missing")
 
         val imgKey = WbiUtil.extractKey(wbiData.imgUrl)
         val subKey = WbiUtil.extractKey(wbiData.subUrl)
@@ -88,6 +94,33 @@ object BilibiliRepository {
                 enableHiRes,
                 cookie
             )
+        }
+    }
+
+    fun invalidateAudioUrl(
+        bvid: String,
+        cid: Long?,
+        audioQuality: Int,
+        enableDolby: Boolean,
+        enableHiRes: Boolean,
+        cookie: String?
+    ) {
+        BilibiliPlaybackCache.invalidateResolution(
+            bvid,
+            cid,
+            audioQuality,
+            enableDolby,
+            enableHiRes,
+            cookie
+        )
+
+        // WBI keys are normally cached for a day, but Bilibili can rotate them earlier. A fatal
+        // playback reload should refresh both the short-lived CDN URL and its signing keys.
+        synchronized(this) {
+            cachedImgKey = null
+            cachedSubKey = null
+            cachedDateStr = null
+            BilibiliPlaybackCache.invalidateWbiKeys()
         }
     }
 

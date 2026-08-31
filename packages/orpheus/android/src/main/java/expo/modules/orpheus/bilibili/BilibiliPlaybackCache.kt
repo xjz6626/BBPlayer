@@ -133,6 +133,46 @@ internal object BilibiliPlaybackCache {
     }
 
     @Synchronized
+    fun invalidateResolution(
+        bvid: String,
+        cid: Long?,
+        audioQuality: Int,
+        enableDolby: Boolean,
+        enableHiRes: Boolean,
+        cookie: String?
+    ) {
+        val keys = mutableSetOf(
+            resolutionKey(
+                bvid,
+                cid,
+                audioQuality,
+                enableDolby,
+                enableHiRes,
+                cookie
+            )
+        )
+
+        // Requests without a CID, and stale-CID recovery, may cache the same resolution under
+        // both the requested key and the latest resolved CID. Remove both aliases so a retry
+        // cannot reopen the URL that just failed.
+        getCid(bvid)?.let { resolvedCid ->
+            keys += resolutionKey(
+                bvid,
+                resolvedCid,
+                audioQuality,
+                enableDolby,
+                enableHiRes,
+                cookie
+            )
+        }
+
+        keys.forEach { key ->
+            memoryCache.remove(key)
+            kv?.removeValueForKey(key)
+        }
+    }
+
+    @Synchronized
     fun getCid(bvid: String): Long? {
         val value = kv?.decodeLong("$CID_PREFIX$bvid", 0L) ?: 0L
         return value.takeIf { it > 0L }
@@ -160,6 +200,11 @@ internal object BilibiliPlaybackCache {
     fun putWbiKeys(date: String, imgKey: String, subKey: String) {
         val encoded = json.encodeToString(CachedWbiKeys(imgKey, subKey, date))
         kv?.encode(WBI_KEYS, encoded)
+    }
+
+    @Synchronized
+    fun invalidateWbiKeys() {
+        kv?.removeValueForKey(WBI_KEYS)
     }
 
     private fun saveResolution(key: String, resolution: CachedAudioResolution) {

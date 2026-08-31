@@ -126,6 +126,20 @@ object DownloadUtil {
         }
     }
 
+    /** Force the next open of a Bilibili item to request a fresh short-lived CDN URL. */
+    fun invalidateBilibiliUri(uri: android.net.Uri?) {
+        if (uri?.scheme != "orpheus" || uri.host != "bilibili") return
+        val bvid = uri.getQueryParameter("bvid") ?: return
+        BilibiliRepository.invalidateAudioUrl(
+            bvid = bvid,
+            cid = uri.getQueryParameter("cid")?.toLongOrNull(),
+            audioQuality = uri.getQueryParameter("quality")?.toIntOrNull() ?: 30280,
+            enableDolby = uri.getQueryParameter("dolby") == "1",
+            enableHiRes = uri.getQueryParameter("hires") == "1",
+            cookie = OrpheusConfig.bilibiliCookie
+        )
+    }
+
     @Synchronized
     fun getDownloadNotificationHelper(context: Context): DownloadNotificationHelper {
         if (downloadNotificationHelper == null) {

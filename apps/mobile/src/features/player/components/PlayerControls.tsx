@@ -101,6 +101,14 @@ export function MainPlaybackControls({
 		}
 	}, [isPlaying])
 
+	// A failed prepare can leave isPlaying=false without emitting another is-playing change.
+	// Reconcile the optimistic button state when Media3 returns to IDLE after an error.
+	useEffect(() => {
+		if (state === PlaybackState.IDLE && !isPlaying) {
+			setDebouncedIsPlaying(false)
+		}
+	}, [isPlaying, state])
+
 	useEffect(() => {
 		if (isFirstMount.current) {
 			isFirstMount.current = false

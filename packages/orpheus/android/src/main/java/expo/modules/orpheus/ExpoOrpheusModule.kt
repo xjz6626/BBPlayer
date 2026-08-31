@@ -202,6 +202,10 @@ class ExpoOrpheusModule : Module() {
          * 处理错误
          */
         override fun onPlayerError(error: PlaybackException) {
+            if (OrpheusMusicService.instance?.isRecoveringFromPlaybackError == true) {
+                Log.w("Orpheus", "Suppressing recoverable player error while retrying", error)
+                return
+            }
             val map = error.toJsMap().toMutableMap()
             map["platform"] = "android"
             sendEvent("onPlayerError", map)
