@@ -33,7 +33,7 @@ object BilibiliRepository {
     }
 
     @Synchronized
-    private fun getWbiKeys(): Pair<String, String> {
+    private fun getWbiKeys(cookie: String?): Pair<String, String> {
         val today = getTodayDateStr()
 
         if (cachedImgKey != null && cachedSubKey != null && today == cachedDateStr) {
@@ -47,19 +47,12 @@ object BilibiliRepository {
             return imgKey to subKey
         }
 
-        val response = api.getNavInfo().execute()
+        val response = api.getNavInfo(cookie).execute()
         if (!response.isSuccessful) {
             throw IOException("Bilibili API Http Error: ${response.code()}")
         }
 
-        val apiResponse = response.body()
-        if (apiResponse?.code != 0) {
-            val msg = apiResponse?.message ?: "Unknown Error"
-            throw IOException("Bilibili API Error: code=${apiResponse?.code} msg=$msg")
-        }
-
-        val wbiData = apiResponse.data?.wbiImg
-            ?: throw IOException("Bilibili API Logic Error: code=0 msg=WBI keys are missing")
+        val wbiData = requireWbiImg(response.body())
 
         val imgKey = WbiUtil.extractKey(wbiData.imgUrl)
         val subKey = WbiUtil.extractKey(wbiData.subUrl)
@@ -162,7 +155,7 @@ object BilibiliRepository {
             cidInternal = getFirstCid(bvid, cookie)
         }
 
-        val (imgKey, subKey) = getWbiKeys()
+        val (imgKey, subKey) = getWbiKeys(cookie)
 
         Log.d(TAG, "resolve url: bvid=$bvid, cid=$cidInternal, enableDolby=$enableDolby, enableHiRes=$enableHiRes")
 
@@ -311,4 +304,25 @@ object BilibiliRepository {
         }
         return apiResponse.data.map { it.cid }
     }
+}
+
+private const val NOT_LOGGED_IN_CODE = -101
+
+/**
+ * The nav endpoint returns usable WBI keys together with code -101 for anonymous requests.
+ * Playback must only reject that response when the keys themselves are missing.
+ */
+internal fun requireWbiImg(apiResponse: BilibiliNavResponse?): WbiImgData {
+    val response = apiResponse
+        ?: throw IOException("Bilibili API Error: code=null msg=Unknown Error")
+
+    if (response.code != 0 && response.code != NOT_LOGGED_IN_CODE) {
+        val msg = response.message ?: "Unknown Error"
+        throw IOException("Bilibili API Error: code=${response.code} msg=$msg")
+    }
+
+    return response.data?.wbiImg
+        ?: throw IOException(
+            "Bilibili API Logic Error: code=${response.code} msg=WBI keys are missing"
+        )
 }

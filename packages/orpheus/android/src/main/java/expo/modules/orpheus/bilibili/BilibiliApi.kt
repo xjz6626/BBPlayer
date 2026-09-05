@@ -8,7 +8,9 @@ import retrofit2.http.QueryMap
 
 interface BilibiliApi {
     @GET("/x/web-interface/nav")
-    fun getNavInfo(): Call<BilibiliNavResponse>
+    fun getNavInfo(
+        @Header("Cookie") cookie: String? = null
+    ): Call<BilibiliNavResponse>
 
     @GET("/x/player/wbi/playurl")
     fun getPlayUrl(
