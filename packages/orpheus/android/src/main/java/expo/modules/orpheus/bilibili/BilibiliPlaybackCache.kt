@@ -11,7 +11,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 @Serializable
 internal data class CachedAudioResolution(
-    val url: String,
+    val urls: List<String>,
     val cid: Long,
     val volume: VolumeData? = null,
     val expiresAtMs: Long,
@@ -27,7 +27,7 @@ internal data class CachedAudioResolution(
 internal object BilibiliPlaybackCache {
     private const val TAG = "Orpheus/BilibiliCache"
     private const val STORE_ID = "bilibili_playback_cache"
-    private const val RESOLUTION_PREFIX = "resolution:"
+    private const val RESOLUTION_PREFIX = "resolution:v2:"
     private const val CID_PREFIX = "cid:"
     private const val WBI_KEYS = "wbi_keys"
     private const val EXPIRY_SAFETY_MARGIN_MS = 60_000L
@@ -50,6 +50,10 @@ internal object BilibiliPlaybackCache {
         if (kv != null) return
         MMKV.initialize(context.applicationContext)
         kv = MMKV.mmkvWithID(STORE_ID)
+        // Old entries retained only the primary URL and cannot recover to a backup CDN.
+        kv?.allKeys()?.filter {
+            it.startsWith("resolution:") && !it.startsWith(RESOLUTION_PREFIX)
+        }?.forEach { kv?.removeValueForKey(it) }
     }
 
     @Synchronized
@@ -94,15 +98,15 @@ internal object BilibiliPlaybackCache {
         enableDolby: Boolean,
         enableHiRes: Boolean,
         cookie: String?,
-        url: String,
+        urls: List<String>,
         volume: VolumeData?
     ) {
         val now = System.currentTimeMillis()
         val resolution = CachedAudioResolution(
-            url = url,
+            urls = urls,
             cid = resolvedCid,
             volume = volume,
-            expiresAtMs = getExpiryMs(url, now),
+            expiresAtMs = urls.minOf { getExpiryMs(it, now) },
             cachedAtMs = now
         )
         val requestedKey = resolutionKey(

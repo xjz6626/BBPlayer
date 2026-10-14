@@ -7,7 +7,6 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
-import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.offline.DownloadManager
 import androidx.media3.exoplayer.offline.DownloadNotificationHelper
@@ -15,6 +14,7 @@ import androidx.media3.exoplayer.scheduler.Requirements
 import expo.modules.orpheus.OrpheusConfig
 import expo.modules.orpheus.bilibili.BilibiliRepository
 import expo.modules.orpheus.manager.DownloadCache
+import expo.modules.orpheus.network.FallbackDataSource
 import expo.modules.orpheus.service.OrpheusDownloadService
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
@@ -103,10 +103,9 @@ object DownloadUtil {
         )
             .setUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36")
 
-        return ResolvingDataSource.Factory(
-            httpDataSourceFactory,
-            BilibiliResolver()
-        )
+        return DataSource.Factory {
+            FallbackDataSource(httpDataSourceFactory.createDataSource(), ::resolveBilibiliDataSpecs)
+        }
     }
 
     /** Resolve the next Bilibili item off the playback critical path. */
@@ -159,42 +158,41 @@ object DownloadUtil {
             .createDataSource()
     }
 
-    private class BilibiliResolver :
-        ResolvingDataSource.Resolver {
-        override fun resolveDataSpec(dataSpec: DataSpec): DataSpec {
-            val uri = dataSpec.uri
-            if (uri.scheme == "orpheus" && uri.host == "bilibili") {
-                try {
-                    val (realUrl, volume) = resolveBilibiliUri(uri)
-                    // 在这里保存响度均衡数据，并且直接发一个事件，在 OrpheusMusicService 监听
-                    if (volume !== null) {
-                        Log.d(
-                            "LoudnessNormalization",
-                            "uri: ${dataSpec.uri}, measuredI: ${volume.measuredI}"
-                        )
-                        LoudnessStorage.setLoudnessData(dataSpec.uri.toString(), volume.measuredI)
-                    }
+    private fun resolveBilibiliDataSpecs(dataSpec: DataSpec): List<DataSpec> {
+        val uri = dataSpec.uri
+        if (uri.scheme == "orpheus" && uri.host == "bilibili") {
+            try {
+                val (urls, volume) = resolveBilibiliUri(uri)
+                // 在这里保存响度均衡数据，并且直接发一个事件，在 OrpheusMusicService 监听
+                if (volume !== null) {
+                    Log.d(
+                        "LoudnessNormalization",
+                        "uri: ${dataSpec.uri}, measuredI: ${volume.measuredI}"
+                    )
+                    LoudnessStorage.setLoudnessData(dataSpec.uri.toString(), volume.measuredI)
+                }
 
-                    val headers = HashMap<String, String>()
-                    headers["Referer"] = "https://www.bilibili.com/"
+                val headers = HashMap(dataSpec.httpRequestHeaders)
+                headers["Referer"] = "https://www.bilibili.com/"
 
-                    return dataSpec.buildUpon()
-                        .setUri(realUrl.toUri())
+                return urls.map { url ->
+                    dataSpec.buildUpon()
+                        .setUri(url.toUri())
                         .setHttpRequestHeaders(headers)
                         .setKey(uri.toString())
                         .build()
-                } catch (e: Exception) {
-                    throw IOException("Resolve Url Failed: ${e.message}", e)
                 }
+            } catch (e: Exception) {
+                throw IOException("Resolve Url Failed: ${e.message}", e)
             }
-            return dataSpec
         }
+        return listOf(dataSpec)
     }
 
-    private fun resolveBilibiliUri(uri: android.net.Uri): Pair<String, expo.modules.orpheus.bilibili.VolumeData?> {
+    private fun resolveBilibiliUri(uri: android.net.Uri): Pair<List<String>, expo.modules.orpheus.bilibili.VolumeData?> {
         val bvid = uri.getQueryParameter("bvid")
             ?: throw IOException("Missing bvid in Bilibili playback URI")
-        return BilibiliRepository.resolveAudioUrl(
+        return BilibiliRepository.resolveAudioUrls(
             bvid = bvid,
             cid = uri.getQueryParameter("cid")?.toLongOrNull(),
             audioQuality = uri.getQueryParameter("quality")?.toIntOrNull() ?: 30280,

@@ -68,18 +68,18 @@ object BilibiliRepository {
     /**
      * 解析音频 URL
      */
-    fun resolveAudioUrl(
+    fun resolveAudioUrls(
         bvid: String,
         cid: Long?,
         audioQuality: Int,
         enableDolby: Boolean,
         enableHiRes: Boolean,
         cookie: String?
-    ): Pair<String, VolumeData?> {
+    ): Pair<List<String>, VolumeData?> {
         val lockKey = "$bvid:${cid ?: "first"}:$audioQuality:$enableDolby:$enableHiRes:${cookie.orEmpty().hashCode()}"
         val resolutionLock = resolutionLocks.computeIfAbsent(lockKey) { Any() }
         return synchronized(resolutionLock) {
-            resolveAudioUrlLocked(
+            resolveAudioUrlsLocked(
                 bvid,
                 cid,
                 audioQuality,
@@ -117,14 +117,14 @@ object BilibiliRepository {
         }
     }
 
-    private fun resolveAudioUrlLocked(
+    private fun resolveAudioUrlsLocked(
         bvid: String,
         cid: Long?,
         audioQuality: Int,
         enableDolby: Boolean,
         enableHiRes: Boolean,
         cookie: String?
-    ): Pair<String, VolumeData?> {
+    ): Pair<List<String>, VolumeData?> {
         BilibiliPlaybackCache.getResolution(
             bvid,
             cid,
@@ -134,7 +134,7 @@ object BilibiliRepository {
             cookie
         )?.let { cached ->
             Log.d(TAG, "resolved audio URL cache hit: bvid=$bvid, cid=${cached.cid}")
-            return cached.url to cached.volume
+            return cached.urls to cached.volume
         }
 
         var cidInternal = cid ?: BilibiliPlaybackCache.getCid(bvid)
@@ -148,7 +148,7 @@ object BilibiliRepository {
                 cookie
             )?.let { cached ->
                 Log.d(TAG, "resolved audio URL cache hit by cached cid: bvid=$bvid, cid=$cidInternal")
-                return cached.url to cached.volume
+                return cached.urls to cached.volume
             }
         }
         if (cidInternal == null) {
@@ -208,22 +208,23 @@ object BilibiliRepository {
         val durl = data.durl
         val volume = data.volume
 
-        val resolvedUrl = if (dash == null) {
+        val resolvedUrls = if (dash == null) {
             if (durl.isNullOrEmpty()) {
                 throw IOException("AudioStreamError: 请求到的流数据不包含 dash 或 durl 任一字段")
             }
-            durl[0].url
+            orderBilibiliAudioUrls(durl[0].url, durl[0].backupUrl)
         } else if (enableDolby && dash.dolby?.audio?.isNotEmpty() == true) {
             Log.d(TAG, "select dolby source")
-            dash.dolby.audio[0].baseUrl
+            orderBilibiliAudioUrls(dash.dolby.audio[0].baseUrl, dash.dolby.audio[0].backupUrl)
         } else if (enableHiRes && dash.flac?.audio != null) {
             Log.d(TAG, "select hires source")
-            dash.flac.audio.baseUrl
+            orderBilibiliAudioUrls(dash.flac.audio.baseUrl, dash.flac.audio.backupUrl)
         } else {
             if (dash.audio.isNullOrEmpty()) {
                 throw IOException("AudioStreamError: 未找到有效的音频流数据")
             }
-            dash.audio.find { it.id == audioQuality }?.baseUrl ?: dash.audio[0].baseUrl
+            val audio = dash.audio.find { it.id == audioQuality } ?: dash.audio[0]
+            orderBilibiliAudioUrls(audio.baseUrl, audio.backupUrl)
         }
 
         BilibiliPlaybackCache.putResolution(
@@ -234,10 +235,10 @@ object BilibiliRepository {
             enableDolby = enableDolby,
             enableHiRes = enableHiRes,
             cookie = cookie,
-            url = resolvedUrl,
+            urls = resolvedUrls,
             volume = volume
         )
-        return resolvedUrl to volume
+        return resolvedUrls to volume
     }
 
     private fun getPlayUrl(
