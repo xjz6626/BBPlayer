@@ -1,11 +1,11 @@
 import type { LegendListRef } from '@legendapp/list/react-native'
 import { useImage } from 'expo-image'
 import { useLocalSearchParams, useRouter } from 'expo-router'
+import * as WebBrowser from 'expo-web-browser'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { StyleSheet, View } from 'react-native'
 import { Appbar, useTheme } from 'react-native-paper'
 
-import NowPlayingBar from '@/components/NowPlayingBar'
 import ThemedRefreshControl, {
 	ThemedRefreshListHeader,
 } from '@/components/theme/ThemedRefreshControl'
@@ -24,6 +24,7 @@ import {
 	useGetMultiPageList,
 	useGetVideoDetails,
 } from '@/hooks/queries/bilibili/video'
+import { useScreenTransitionReady } from '@/hooks/router/useScreenTransitionReady'
 import { useModalStore } from '@/hooks/stores/useModalStore'
 import { useDoubleTapScrollToTop } from '@/hooks/ui/useDoubleTapScrollToTop'
 import { usePlaylistBackgroundColor } from '@/hooks/ui/usePlaylistBackgroundColor'
@@ -36,6 +37,7 @@ import { resolveBilibiliImageUrl } from '@/utils/imageUrl'
 import toast from '@/utils/toast'
 
 export default function MultipagePage() {
+	const isListReady = useScreenTransitionReady()
 	const router = useRouter()
 	const { bvid, cid } = useLocalSearchParams<{ bvid: string; cid?: string }>()
 	const [refreshing, setRefreshing] = useState(false)
@@ -83,7 +85,6 @@ export default function MultipagePage() {
 	})
 	const {
 		backgroundColor,
-		nowPlayingBarColor,
 		primaryButtonColor,
 		primaryButtonTextColor,
 		secondaryButtonContainerColor,
@@ -122,7 +123,7 @@ export default function MultipagePage() {
 	}, [bvid, router, syncMultipage])
 
 	useEffect(() => {
-		if (tracksData.length > 0 && cid) {
+		if (isListReady && tracksData.length > 0 && cid) {
 			const index = tracksData.findIndex((track) => String(track.id) === cid)
 			if (index !== -1) {
 				// 给一点延时给列表渲染
@@ -138,7 +139,7 @@ export default function MultipagePage() {
 				}
 			}
 		}
-	}, [cid, tracksData])
+	}, [cid, tracksData, isListReady])
 
 	const renderCustomItem = useCallback(
 		({
@@ -198,8 +199,8 @@ export default function MultipagePage() {
 		return null
 	}
 
-	if (isMultipageDataPending || isVideoDataPending) {
-		return <PlaylistPageSkeleton />
+	if (isMultipageDataPending || isVideoDataPending || !isListReady) {
+		return <PlaylistPageSkeleton animate={isListReady} />
 	}
 
 	if (isMultipageDataError || isVideoDataError) {
@@ -281,6 +282,13 @@ export default function MultipagePage() {
 								description={videoData.desc}
 								onClickMainButton={handleSync}
 								mainButtonIcon={'sync'}
+								secondaryButtonText='打开原视频'
+								secondaryButtonIcon='open-in-new'
+								onClickSecondaryButton={() =>
+									void WebBrowser.openBrowserAsync(
+										`https://www.bilibili.com/video/${bvid}`,
+									)
+								}
 								linkedPlaylistId={linkedPlaylistId}
 								id={bv2av(bvid)}
 								primaryButtonColor={primaryButtonColor}
@@ -304,9 +312,6 @@ export default function MultipagePage() {
 					}
 				/>
 			</View>
-			<View style={styles.nowPlayingBarContainer}>
-				<NowPlayingBar backgroundColor={nowPlayingBarColor} />
-			</View>
 		</View>
 	)
 }
@@ -317,11 +322,5 @@ const styles = StyleSheet.create({
 	},
 	listContainer: {
 		flex: 1,
-	},
-	nowPlayingBarContainer: {
-		position: 'absolute',
-		bottom: 0,
-		left: 0,
-		right: 0,
 	},
 })

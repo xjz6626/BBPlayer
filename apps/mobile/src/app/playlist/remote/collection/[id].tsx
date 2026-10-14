@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { StyleSheet, View } from 'react-native'
 import { Appbar, useTheme } from 'react-native-paper'
 
-import NowPlayingBar from '@/components/NowPlayingBar'
 import ThemedRefreshControl, {
 	ThemedRefreshListHeader,
 } from '@/components/theme/ThemedRefreshControl'
@@ -18,6 +17,7 @@ import { useTrackSelection } from '@/features/playlist/remote/hooks/useTrackSele
 import { PlaylistPageSkeleton } from '@/features/playlist/skeletons/PlaylistSkeleton'
 import { usePlaylistSync } from '@/hooks/mutations/db/playlist'
 import { useCollectionAllContents } from '@/hooks/queries/bilibili/favorite'
+import { useScreenTransitionReady } from '@/hooks/router/useScreenTransitionReady'
 import { useModalStore } from '@/hooks/stores/useModalStore'
 import { useDoubleTapScrollToTop } from '@/hooks/ui/useDoubleTapScrollToTop'
 import { usePlaylistBackgroundColor } from '@/hooks/ui/usePlaylistBackgroundColor'
@@ -57,6 +57,7 @@ const mapApiItemToTrack = (
 }
 
 export default function CollectionPage() {
+	const isListReady = useScreenTransitionReady()
 	const router = useRouter()
 	const { id } = useLocalSearchParams<{ id: string }>()
 	const theme = useTheme()
@@ -97,7 +98,6 @@ export default function CollectionPage() {
 	)
 	const {
 		backgroundColor,
-		nowPlayingBarColor,
 		primaryButtonColor,
 		primaryButtonTextColor,
 		secondaryButtonContainerColor,
@@ -144,8 +144,8 @@ export default function CollectionPage() {
 		return null
 	}
 
-	if (isCollectionDataPending) {
-		return <PlaylistPageSkeleton />
+	if (isCollectionDataPending || !isListReady) {
+		return <PlaylistPageSkeleton animate={isListReady} />
 	}
 
 	if (isCollectionDataError) {
@@ -249,9 +249,6 @@ export default function CollectionPage() {
 					}
 				/>
 			</View>
-			<View style={styles.nowPlayingBarContainer}>
-				<NowPlayingBar backgroundColor={nowPlayingBarColor} />
-			</View>
 		</View>
 	)
 }
@@ -262,11 +259,5 @@ const styles = StyleSheet.create({
 	},
 	listContainer: {
 		flex: 1,
-	},
-	nowPlayingBarContainer: {
-		position: 'absolute',
-		bottom: 0,
-		left: 0,
-		right: 0,
 	},
 })

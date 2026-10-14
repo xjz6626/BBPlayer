@@ -11,10 +11,11 @@ export default (api) => {
 		presets: [['babel-preset-expo']],
 		env: {
 			production: {
-				plugins: ['react-native-paper/babel', 'transform-remove-console'],
+				plugins: ['react-native-paper/babel'],
 			},
 		},
 		plugins: [
+			'@legendapp/state/babel',
 			[
 				'babel-plugin-react-compiler',
 				{
@@ -38,18 +39,6 @@ export default (api) => {
 							}
 						},
 					},
-				},
-			],
-			[
-				'react-native-boost/plugin',
-				{
-					ignores: ['node_modules/**', '../../node_modules/**'],
-					optimizations: {
-						text: true,
-						view: true,
-					},
-					silent: false,
-					verbose: true,
 				},
 			],
 			['inline-import', { extensions: ['.sql'] }],

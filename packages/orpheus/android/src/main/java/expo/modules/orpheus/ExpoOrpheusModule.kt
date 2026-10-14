@@ -24,6 +24,7 @@ import androidx.media3.exoplayer.offline.DownloadService
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.MoreExecutors
 import expo.modules.kotlin.activityresult.AppContextActivityResultLauncher
 import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
@@ -32,9 +33,11 @@ import expo.modules.kotlin.typedarray.Float32Array
 import expo.modules.orpheus.util.DirectoryPickerContract
 import expo.modules.orpheus.exception.ControllerNotInitializedException
 import expo.modules.orpheus.manager.CoverDownloadManager
+import expo.modules.orpheus.manager.DownloadCache
 import expo.modules.orpheus.manager.LyricsConsumer
 import expo.modules.orpheus.manager.LyriconBackend
 import expo.modules.orpheus.manager.SpectrumManager
+import expo.modules.orpheus.model.DownloadTaskRecord
 import expo.modules.orpheus.model.TrackRecord
 import expo.modules.orpheus.service.OrpheusDownloadService
 import expo.modules.orpheus.service.OrpheusMusicService
@@ -43,6 +46,7 @@ import expo.modules.orpheus.util.ExportOptions
 import expo.modules.orpheus.util.GeneralStorage
 import expo.modules.orpheus.util.LoudnessStorage
 import expo.modules.orpheus.util.TrackAudioEffectStorage
+import expo.modules.orpheus.util.TrackResumeStorage
 import expo.modules.orpheus.util.runExportDownloads
 import expo.modules.orpheus.util.toJsMap
 import expo.modules.orpheus.util.toMediaItem
@@ -52,12 +56,24 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 @UnstableApi
 class ExpoOrpheusModule : Module() {
+    private val uncompletedDownloadStates = intArrayOf(
+        Download.STATE_QUEUED,
+        Download.STATE_STOPPED,
+        Download.STATE_DOWNLOADING,
+        Download.STATE_FAILED,
+        Download.STATE_REMOVING,
+        Download.STATE_RESTARTING,
+    )
+
     // keep this controller only to make sure MediaLibraryService is init.
     private var controllerFuture: ListenableFuture<MediaController>? = null
 
@@ -67,7 +83,20 @@ class ExpoOrpheusModule : Module() {
 
     private var downloadManager: DownloadManager? = null
 
-    private val spectrumManager = SpectrumManager()
+    private val spectrumManager = SpectrumManager { audioSessionId, error ->
+        GeneralStorage.setSpectrumVisualizerEnabled(false)
+        sendEvent(
+            "onSpectrumVisualizerEnabledChanged", mapOf(
+                "enabled" to false
+            )
+        )
+        sendEvent(
+            "onSpectrumVisualizerError", mapOf(
+                "audioSessionId" to audioSessionId,
+                "message" to (error.message ?: error.javaClass.simpleName)
+            )
+        )
+    }
     private var tempBuffer: FloatArray? = null
     private var spectrumCaptureRequested = false
     private var isAppForeground = true
@@ -246,6 +275,8 @@ class ExpoOrpheusModule : Module() {
             "onCoverDownloadProgress",
             "onExportProgress",
             "onStatusBarLyricsStatusChanged",
+            "onSpectrumVisualizerError",
+            "onSpectrumVisualizerEnabledChanged",
             "onRequestClearLyrics",
             "onQueueChanged"
         )
@@ -261,6 +292,7 @@ class ExpoOrpheusModule : Module() {
             GeneralStorage.initialize(context)
             LoudnessStorage.initialize(context)
             TrackAudioEffectStorage.initialize(context)
+            TrackResumeStorage.initialize(context)
             expo.modules.orpheus.manager.CachedUriManager.initialize(context)
             val sessionToken = SessionToken(
                 context,
@@ -306,6 +338,32 @@ class ExpoOrpheusModule : Module() {
         Property("autoplayOnStartEnabled")
             .get { GeneralStorage.isAutoplayOnStartEnabled() }
             .set { enabled: Boolean -> GeneralStorage.setAutoplayOnStartEnabled(enabled) }
+
+        /**
+         * 续播策略：0 = 不自动续播（music），1 = 逐首断点续播（podcast）。
+         * 原生持久化，供服务冷启动时无需等待 JS 即可使用。
+         */
+        Property("playbackResumeStrategy")
+            .get { TrackResumeStorage.getStrategy() }
+            .set { strategy: Int -> TrackResumeStorage.setStrategy(strategy) }
+
+        Property("isSpectrumVisualizerEnabled")
+            .get { GeneralStorage.isSpectrumVisualizerEnabled() }
+            .set { enabled: Boolean ->
+                GeneralStorage.setSpectrumVisualizerEnabled(enabled)
+                mainHandler.post {
+                    if (enabled) {
+                        updateSpectrumManagerState()
+                    } else {
+                        spectrumManager.stop()
+                    }
+                    sendEvent(
+                        "onSpectrumVisualizerEnabledChanged", mapOf(
+                            "enabled" to GeneralStorage.isSpectrumVisualizerEnabled()
+                        )
+                    )
+                }
+            }
 
         Property("isDesktopLyricsShown")
             .get { GeneralStorage.isDesktopLyricsShown() }
@@ -434,7 +492,13 @@ class ExpoOrpheusModule : Module() {
         }
 
         AsyncFunction("clear") Coroutine { ->
-            withPlayerOnMainThread { it.clearMediaItems() }
+            withServiceAndPlayerOnMainThread { service, currentPlayer ->
+                // 清空队列前先保存当前音频断点，逐首记录需保留
+                service.saveCurrentResumeRecord()
+                currentPlayer.clearMediaItems()
+                GeneralStorage.saveQueue(emptyList())
+                GeneralStorage.savePosition(0, 0L)
+            }
         }
 
         AsyncFunction("skipTo") Coroutine { index: Int ->
@@ -586,6 +650,20 @@ class ExpoOrpheusModule : Module() {
             }
         }
 
+        AsyncFunction("moveTrack") Coroutine { fromIndex: Int, toIndex: Int ->
+            withServiceAndPlayerOnMainThread { service, currentPlayer ->
+                val count = currentPlayer.mediaItemCount
+                if (fromIndex !in 0 until count || toIndex !in 0 until count || fromIndex == toIndex) {
+                    return@withServiceAndPlayerOnMainThread
+                }
+                if (service.shuffleManager.isEnabled) {
+                    service.shuffleManager.moveInTraversal(fromIndex, toIndex)
+                } else {
+                    currentPlayer.moveMediaItem(fromIndex, toIndex)
+                }
+            }
+        }
+
         AsyncFunction("getQueue") Coroutine { ->
             val items = withServiceAndPlayerOnMainThread { service, currentPlayer ->
                 // When shuffle is enabled, return items in the logical playback (shuffle traversal)
@@ -606,6 +684,34 @@ class ExpoOrpheusModule : Module() {
             items.map(::mediaItemToTrackRecord)
         }
 
+        AsyncFunction("reverseRemainingQueue") Coroutine { ->
+            withServiceAndPlayerOnMainThread { service, currentPlayer ->
+                // Shuffle traversal has its own order. The queue UI disables this action
+                // while shuffle is enabled, and the native guard keeps the API safe for
+                // callers outside that UI.
+                if (service.shuffleManager.isEnabled) return@withServiceAndPlayerOnMainThread
+
+                val currentIndex = currentPlayer.currentMediaItemIndex
+                val lastIndex = currentPlayer.mediaItemCount - 1
+                if (currentIndex == C.INDEX_UNSET || currentIndex >= lastIndex) {
+                    return@withServiceAndPlayerOnMainThread
+                }
+
+                // Build the reversed pending suffix in one pass, then replace it in a
+                // single playlist operation. The current item is outside that range, so
+                // Media3 keeps its playback position and play state intact.
+                val reversedRemaining = ArrayList<MediaItem>(lastIndex - currentIndex)
+                for (index in lastIndex downTo currentIndex + 1) {
+                    reversedRemaining.add(currentPlayer.getMediaItemAt(index))
+                }
+                currentPlayer.replaceMediaItems(
+                    currentIndex + 1,
+                    currentPlayer.mediaItemCount,
+                    reversedRemaining
+                )
+            }
+        }
+
         AsyncFunction("setSleepTimer") { durationMs: Long ->
             OrpheusMusicService.instance?.startSleepTimer(durationMs)
             return@AsyncFunction null
@@ -622,8 +728,10 @@ class ExpoOrpheusModule : Module() {
 
         AsyncFunction("addToEnd") Coroutine { tracks: List<TrackRecord>, startFromId: String?, clearQueue: Boolean? ->
             val context = appContext.reactContext
-            withPlayerOnMainThread { currentPlayer ->
+            withServiceAndPlayerOnMainThread { service, currentPlayer ->
                 if (clearQueue == true) {
+                    // 替换队列前先保存旧音频断点
+                    service.saveCurrentResumeRecord()
                     currentPlayer.clearMediaItems()
                 }
 
@@ -647,7 +755,7 @@ class ExpoOrpheusModule : Module() {
                         currentPlayer.prepare()
                         currentPlayer.play()
 
-                        return@withPlayerOnMainThread
+                        return@withServiceAndPlayerOnMainThread
                     }
                 }
 
@@ -808,19 +916,41 @@ class ExpoOrpheusModule : Module() {
             CoverDownloadManager.deleteAllCovers(context)
         }
 
+        AsyncFunction("clearPlaybackCache") Coroutine { ->
+            val context = cachedAppContext ?: error("Orpheus application context is unavailable")
+            withContext(Dispatchers.IO) { DownloadCache.clearLruCache(context) }
+        }
+
         AsyncFunction("getDownloads") {
             val context =
-                appContext.reactContext ?: return@AsyncFunction emptyList<Map<String, Any>>()
+                appContext.reactContext ?: return@AsyncFunction emptyList<DownloadTaskRecord>()
             val downloadManager = DownloadUtil.getDownloadManager(context)
             val downloadIndex = downloadManager.downloadIndex
 
             val cursor = downloadIndex.getDownloads()
-            val result = ArrayList<Map<String, Any>>()
+            val result = ArrayList<DownloadTaskRecord>()
 
             try {
                 while (cursor.moveToNext()) {
                     val download = cursor.download
-                    result.add(getDownloadMap(download))
+                    result.add(getDownloadRecord(download))
+                }
+            } finally {
+                cursor.close()
+            }
+            return@AsyncFunction result
+        }
+
+        AsyncFunction("getCompletedDownloadTasks") {
+            val context =
+                appContext.reactContext ?: return@AsyncFunction emptyList<DownloadTaskRecord>()
+            val downloadIndex = DownloadUtil.getDownloadManager(context).downloadIndex
+            val cursor = downloadIndex.getDownloads(Download.STATE_COMPLETED)
+            val result = ArrayList<DownloadTaskRecord>()
+
+            try {
+                while (cursor.moveToNext()) {
+                    result.add(getDownloadRecord(cursor.download))
                 }
             } finally {
                 cursor.close()
@@ -850,18 +980,16 @@ class ExpoOrpheusModule : Module() {
             val downloadManager = DownloadUtil.getDownloadManager(context)
             val downloadIndex = downloadManager.downloadIndex
 
-            val cursor = downloadIndex.getDownloads()
+            val cursor = downloadIndex.getDownloads(*uncompletedDownloadStates)
             try {
                 while (cursor.moveToNext()) {
                     val download = cursor.download
-                    if (download.state != Download.STATE_COMPLETED) {
-                        DownloadService.sendRemoveDownload(
-                            context,
-                            OrpheusDownloadService::class.java,
-                            download.request.id,
-                            false
-                        )
-                    }
+                    DownloadService.sendRemoveDownload(
+                        context,
+                        OrpheusDownloadService::class.java,
+                        download.request.id,
+                        false
+                    )
                 }
             } finally {
                 cursor.close()
@@ -966,19 +1094,17 @@ class ExpoOrpheusModule : Module() {
 
         AsyncFunction("getUncompletedDownloadTasks") {
             val context =
-                appContext.reactContext ?: return@AsyncFunction emptyList<Map<String, Any>>()
+                appContext.reactContext ?: return@AsyncFunction emptyList<DownloadTaskRecord>()
             val downloadManager = DownloadUtil.getDownloadManager(context)
             val downloadIndex = downloadManager.downloadIndex
 
-            val cursor = downloadIndex.getDownloads()
-            val result = ArrayList<Map<String, Any>>()
+            val cursor = downloadIndex.getDownloads(*uncompletedDownloadStates)
+            val result = ArrayList<DownloadTaskRecord>()
 
             try {
                 while (cursor.moveToNext()) {
                     val download = cursor.download
-                    if (download.state != Download.STATE_COMPLETED) {
-                        result.add(getDownloadMap(download))
-                    }
+                    result.add(getDownloadRecord(download))
                 }
             } finally {
                 cursor.close()
@@ -1146,28 +1272,40 @@ class ExpoOrpheusModule : Module() {
         }
     }
 
-    private fun getDownloadMap(download: Download): Map<String, Any> {
+    private fun getDownloadRecord(download: Download): DownloadTaskRecord {
         val trackJson = if (download.request.data.isNotEmpty()) {
             String(download.request.data)
         } else null
 
-        val map = mutableMapOf<String, Any>(
-            "id" to download.request.id,
-            "state" to download.state,
-            "percentDownloaded" to download.percentDownloaded,
-            "bytesDownloaded" to download.bytesDownloaded,
-            "contentLength" to download.contentLength
-        )
+        val record = DownloadTaskRecord().apply {
+            id = download.request.id
+            state = download.state
+            percentDownloaded = download.percentDownloaded
+            bytesDownloaded = download.bytesDownloaded
+            contentLength = download.contentLength
+        }
 
         if (trackJson != null) {
             try {
-                val track = json.decodeFromString<TrackRecord>(trackJson)
-                map["track"] = track
+                record.track = json.decodeFromString<TrackRecord>(trackJson)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }
-        return map
+        return record
+    }
+
+    private fun getDownloadEventPayload(download: Download): Map<String, Any> {
+        val record = getDownloadRecord(download)
+        return mutableMapOf<String, Any>(
+            "id" to record.id,
+            "state" to record.state,
+            "percentDownloaded" to record.percentDownloaded,
+            "bytesDownloaded" to record.bytesDownloaded,
+            "contentLength" to record.contentLength,
+        ).apply {
+            record.track?.let { put("track", it) }
+        }
     }
 
     private val downloadListener = object : DownloadManager.Listener {
@@ -1176,7 +1314,7 @@ class ExpoOrpheusModule : Module() {
             download: Download,
             finalException: Exception?
         ) {
-            sendEvent("onDownloadUpdated", getDownloadMap(download))
+            sendEvent("onDownloadUpdated", getDownloadEventPayload(download))
             updateDownloadProgressRunnerState()
 
             // 歌曲下载完成后，异步下载封面
@@ -1207,7 +1345,7 @@ class ExpoOrpheusModule : Module() {
             if (manager.currentDownloads.isNotEmpty()) {
                 for (download in manager.currentDownloads) {
                     if (download.state == Download.STATE_DOWNLOADING) {
-                        sendEvent("onDownloadUpdated", getDownloadMap(download))
+                        sendEvent("onDownloadUpdated", getDownloadEventPayload(download))
                     }
                 }
                 mainHandler.postDelayed(this, 500)
@@ -1273,6 +1411,7 @@ class ExpoOrpheusModule : Module() {
         val p = player
         if (
             spectrumCaptureRequested &&
+            GeneralStorage.isSpectrumVisualizerEnabled() &&
             isAppForeground &&
             p?.isPlaying == true &&
             p.audioSessionId != C.AUDIO_SESSION_ID_UNSET
@@ -1359,20 +1498,40 @@ class ExpoOrpheusModule : Module() {
         }
     }
 
-    private suspend fun <T> withPlayerOnMainThread(block: (Player) -> T): T =
-        withContext(Dispatchers.Main.immediate) {
+    private suspend fun awaitController() {
+        val future = controllerFuture ?: throw ControllerNotInitializedException()
+        suspendCancellableCoroutine<Unit> { continuation ->
+            future.addListener({
+                try {
+                    future.get()
+                    if (continuation.isActive) continuation.resume(Unit)
+                } catch (error: Exception) {
+                    if (continuation.isActive) {
+                        continuation.resumeWithException(error.cause ?: error)
+                    }
+                }
+            }, MoreExecutors.directExecutor())
+        }
+    }
+
+    private suspend fun <T> withPlayerOnMainThread(block: (Player) -> T): T {
+        awaitController()
+        return withContext(Dispatchers.Main.immediate) {
             ensurePlayer()
             val currentPlayer = player ?: throw ControllerNotInitializedException()
             block(currentPlayer)
         }
+    }
 
-    private suspend fun <T> withServiceAndPlayerOnMainThread(block: (OrpheusMusicService, Player) -> T): T =
-        withContext(Dispatchers.Main.immediate) {
+    private suspend fun <T> withServiceAndPlayerOnMainThread(block: (OrpheusMusicService, Player) -> T): T {
+        awaitController()
+        return withContext(Dispatchers.Main.immediate) {
             ensurePlayer()
             val service = OrpheusMusicService.instance ?: throw ControllerNotInitializedException()
             val currentPlayer = player ?: throw ControllerNotInitializedException()
             block(service, currentPlayer)
         }
+    }
 
     private suspend fun <T> withServiceOnMainThread(block: (OrpheusMusicService?) -> T): T =
         withContext(Dispatchers.Main.immediate) {

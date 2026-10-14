@@ -1,11 +1,11 @@
 import { errAsync, okAsync, ResultAsync } from 'neverthrow'
+import { fetch } from 'react-native-nitro-fetch'
 
 import { useAppStore } from '@/hooks/stores/useAppStore'
 import { BilibiliApiError } from '@/lib/errors/thirdparty/bilibili'
 import type {
 	BilibiliCaptchaTokenData,
 	BilibiliCommentsResponse,
-	BilibiliDanmakuItem,
 	BilibiliGarbAssetBagResponse,
 	BilibiliGarbBenefitResponse,
 	BilibiliGarbSearchResponse,
@@ -23,6 +23,8 @@ import {
 	type BilibiliAudioStreamResponse,
 	type BilibiliCollection,
 	type BilibiliCollectionAllContents,
+	type BilibiliSeriesMetadata,
+	type BilibiliSeriesArchives,
 	type BilibiliDealFavoriteForOneVideoResponse,
 	type BilibiliDynamicFeed,
 	type BilibiliDynamicFeedUpdate,
@@ -39,14 +41,17 @@ import {
 	type BilibiliSearchUser,
 	type BilibiliUserInfo,
 	type BilibiliUserRelation,
+	type BilibiliFollowingsResponse,
+	type BilibiliFollowingProfile,
+	type BilibiliFollowingGroup,
 	type BilibiliUserUploadedVideosResponse,
 	type BilibiliVideoDetails,
 } from '@/types/apis/bilibili'
 import type { BilibiliTrack } from '@/types/core/media'
 import log from '@/utils/log'
+import { returnOrThrowAsync } from '@/utils/neverthrow-utils'
 
 import { bilibiliApiClient } from './client'
-import { bilibili } from './proto/dm'
 import { bv2av } from './utils'
 import getWbiEncodedParams from './wbi'
 
@@ -281,79 +286,6 @@ export class BilibiliApi {
 	}
 
 	/**
-	 * 获取分段弹幕
-	 * @param bvid 视频 BV 号
-	 * @param cid 视频 CID
-	 * @param segmentIndex 分段索引（6min 一段，从 1 开始）
-	 */
-	getSegDanmaku({
-		bvid,
-		cid,
-		segmentIndex,
-		signal,
-	}: {
-		bvid: string
-		cid: number
-		segmentIndex: number
-		signal?: AbortSignal
-	}): ResultAsync<BilibiliDanmakuItem[], BilibiliApiError> {
-		const params = getWbiEncodedParams({
-			type: 1,
-			oid: cid,
-			segment_index: segmentIndex,
-			pid: bv2av(bvid),
-		})
-
-		return params
-			.andThen((encodedParams) => {
-				return bilibiliApiClient.getBuffer({
-					endpoint: '/x/v2/dm/wbi/web/seg.so',
-					params: encodedParams,
-					signal,
-				})
-			})
-			.andThen((buffer) => {
-				try {
-					const data = new Uint8Array(buffer)
-					const decoded =
-						bilibili.community.service.dm.v1.DmSegMobileReply.decode(data)
-					const filtered = decoded.elems.filter((elem) => {
-						return (
-							elem.progress !== undefined &&
-							elem.progress !== null &&
-							elem.id !== undefined &&
-							elem.id !== null &&
-							elem.content !== undefined &&
-							elem.content !== null &&
-							elem.mode !== undefined &&
-							elem.mode !== null
-						)
-					}) as (Omit<BilibiliDanmakuItem, 'progress'> & {
-						progress: number | Long
-					})[]
-					// oxlint-disable-next-line oxc/no-map-spread -- 如果修改为 Object.assign 会导致 worklets 报错？
-					const mapped = filtered.map((elem) => ({
-						...elem,
-						progress:
-							typeof elem.progress === 'number'
-								? elem.progress
-								: elem.progress.toNumber(),
-					}))
-					return okAsync(mapped)
-				} catch (error) {
-					// TODO: 有可能返回的是 json，需要解析并且给出详细的错误信息
-					return errAsync(
-						new BilibiliApiError({
-							message: `弹幕解包失败: ${error instanceof Error ? error.message : String(error)}`,
-							type: 'ResponseFailed',
-							cause: error,
-						}),
-					)
-				}
-			})
-	}
-
-	/**
 	 * 搜索视频
 	 */
 	searchVideos({
@@ -392,6 +324,11 @@ export class BilibiliApi {
 				if (!res.result) {
 					res.result = []
 				}
+				// search_type=video 也会混入 type 为 ketang（B站课堂）的条目，
+				// 这类条目不是稿件，bvid 为空，无法作为 track 录入本地
+				res.result = res.result.filter(
+					(item) => item.type !== 'ketang' && !!item.bvid,
+				)
 				return okAsync(res)
 			})
 	}
@@ -697,6 +634,114 @@ export class BilibiliApi {
 		})
 	}
 
+	getUserRelation({
+		mid,
+		signal,
+	}: {
+		mid: number
+		signal?: AbortSignal
+	}): ResultAsync<BilibiliUserRelation, BilibiliApiError> {
+		return bilibiliApiClient.get<BilibiliUserRelation>({
+			endpoint: '/x/relation',
+			params: { fid: mid.toString() },
+			signal,
+		})
+	}
+
+	setUserFollowing({
+		mid,
+		following,
+	}: {
+		mid: number
+		following: boolean
+	}): ResultAsync<boolean, BilibiliApiError> {
+		return (
+			bilibiliApiClient
+				.postWithCsrf<null>({
+					endpoint: '/x/relation/modify',
+					payload: {
+						fid: mid.toString(),
+						act: following ? '1' : '2',
+						re_src: '11',
+					},
+				})
+				// 成功响应没有 data；转换为确认值，避免解包时将空值当成失败。
+				.map(() => true)
+		)
+	}
+
+	getFollowings({
+		mid,
+		pn,
+		signal,
+	}: {
+		mid: number
+		pn: number
+		signal?: AbortSignal
+	}): ResultAsync<BilibiliFollowingsResponse, BilibiliApiError> {
+		return bilibiliApiClient.get<BilibiliFollowingsResponse>({
+			endpoint: '/x/relation/followings',
+			params: { vmid: mid.toString(), pn: pn.toString(), ps: '50' },
+			signal,
+		})
+	}
+
+	/** 搜索当前账号的关注列表。 */
+	searchFollowings({
+		mid,
+		keyword,
+		pn,
+		signal,
+	}: {
+		mid: number
+		keyword: string
+		pn: number
+		signal?: AbortSignal
+	}): ResultAsync<BilibiliFollowingsResponse, BilibiliApiError> {
+		return bilibiliApiClient.get<BilibiliFollowingsResponse>({
+			endpoint: '/x/relation/followings/search',
+			params: {
+				vmid: mid.toString(),
+				name: keyword,
+				pn: pn.toString(),
+				ps: '50',
+			},
+			signal,
+		})
+	}
+
+	/** 获取当前账号的关注分组（包括默认分组和特别关注）。 */
+	getFollowingGroups({ signal }: { signal?: AbortSignal } = {}): ResultAsync<
+		BilibiliFollowingGroup[],
+		BilibiliApiError
+	> {
+		return bilibiliApiClient
+			.get<BilibiliFollowingGroup[] | null>({
+				endpoint: '/x/relation/tags',
+				signal,
+			})
+			.map((groups) => groups ?? [])
+	}
+
+	/** 分页获取当前账号的分组成员；该接口直接返回数组。 */
+	getFollowingGroupMembers({
+		tagId,
+		pn,
+		signal,
+	}: {
+		tagId: number
+		pn: number
+		signal?: AbortSignal
+	}): ResultAsync<BilibiliFollowingProfile[], BilibiliApiError> {
+		return bilibiliApiClient
+			.get<BilibiliFollowingProfile[] | null>({
+				endpoint: '/x/relation/tag',
+				params: { tagid: tagId.toString(), pn: pn.toString(), ps: '20' },
+				signal,
+			})
+			.map((members) => members ?? [])
+	}
+
 	/**
 	 * 获取别人用户信息
 	 */
@@ -897,6 +942,123 @@ export class BilibiliApi {
 		})
 	}
 
+	getSeriesMetadata({
+		seriesId,
+		signal,
+	}: {
+		seriesId: number
+		signal?: AbortSignal
+	}): ResultAsync<BilibiliSeriesMetadata['meta'], BilibiliApiError> {
+		return bilibiliApiClient
+			.get<BilibiliSeriesMetadata>({
+				endpoint: '/x/series/series',
+				params: { series_id: String(seriesId) },
+				signal,
+			})
+			.map(({ meta }) => meta)
+	}
+
+	getSeriesArchivesPage({
+		seriesId,
+		mid,
+		pageNumber,
+		pageSize = 20,
+		signal,
+	}: {
+		seriesId: number
+		mid: number
+		pageNumber: number
+		pageSize?: number
+		signal?: AbortSignal
+	}): ResultAsync<BilibiliSeriesArchives, BilibiliApiError> {
+		return bilibiliApiClient.get<BilibiliSeriesArchives>({
+			endpoint: '/x/series/archives',
+			params: {
+				mid: String(mid),
+				series_id: String(seriesId),
+				ps: String(pageSize),
+				pn: String(pageNumber),
+			},
+			signal,
+		})
+	}
+
+	/** 仅供用户主动同步时全量读取；系列页面逐页请求。 */
+	getSeriesAllContents({
+		seriesId,
+		signal,
+		onPage,
+	}: {
+		seriesId: number
+		signal?: AbortSignal
+		onPage?: (loaded: number, total: number) => void
+	}): ResultAsync<BilibiliCollectionAllContents, BilibiliApiError> {
+		return ResultAsync.fromPromise(
+			(async () => {
+				const meta = await returnOrThrowAsync(
+					this.getSeriesMetadata({ seriesId, signal }),
+				)
+				const user = await this.getOtherUserInfo({ mid: meta.mid, signal })
+				const medias: BilibiliCollectionAllContents['medias'] = []
+				const pageSize = 100
+				for (let page = 1; ; page += 1) {
+					// oxlint-disable-next-line no-await-in-loop
+					const result = await returnOrThrowAsync(
+						this.getSeriesArchivesPage({
+							seriesId,
+							mid: meta.mid,
+							pageNumber: page,
+							pageSize,
+							signal,
+						}),
+					)
+					for (const archive of result.archives ?? []) {
+						medias.push({
+							id: archive.aid,
+							bvid: archive.bvid,
+							title: archive.title,
+							cover: archive.pic,
+							duration: archive.duration,
+							pubtime: archive.pubdate * 1000,
+							upper: {
+								mid: archive.upMid,
+								name: user.isOk() ? user.value.name : `UP主 ${meta.mid}`,
+							},
+							cnt_info: { collect: 0, play: 0, danmaku: 0 },
+						})
+					}
+					onPage?.(medias.length, result.page.total)
+					if (!result.archives?.length || medias.length >= result.page.total)
+						break
+				}
+				return {
+					info: {
+						id: meta.series_id,
+						season_type: 0,
+						title: meta.name,
+						cover: medias[0]?.cover ?? '',
+						media_count: meta.total,
+						intro: meta.description,
+						upper: {
+							mid: meta.mid,
+							name: user.isOk() ? user.value.name : `UP主 ${meta.mid}`,
+						},
+						cnt_info: { collect: 0, play: 0, danmaku: 0 },
+					},
+					medias,
+				}
+			})(),
+			(error) =>
+				error instanceof BilibiliApiError
+					? error
+					: new BilibiliApiError({
+							message: `获取系列失败: ${String(error)}`,
+							type: 'RequestFailed',
+							cause: error,
+						}),
+		)
+	}
+
 	/**
 	 * 单个视频添加/删除到多个收藏夹
 	 */
@@ -944,7 +1106,7 @@ export class BilibiliApi {
 	}): ResultAsync<BilibiliPlaylist[], BilibiliApiError> {
 		const avid = bv2av(bvid)
 		return bilibiliApiClient
-			.get<{ list: BilibiliPlaylist[] | null }>({
+			.get<{ list: BilibiliPlaylist[] | null } | null>({
 				endpoint: '/x/v3/fav/folder/created/list-all',
 				params: {
 					up_mid: userMid.toString(),
@@ -953,12 +1115,7 @@ export class BilibiliApi {
 				},
 				signal,
 			})
-			.map((response) => {
-				if (!response.list) {
-					return []
-				}
-				return response.list
-			})
+			.map((response) => response?.list ?? [])
 	}
 
 	/**
@@ -1014,28 +1171,6 @@ export class BilibiliApi {
 				signal,
 			})
 		})
-	}
-
-	/**
-	 * 查询当前账号与目标 UP 主的关注关系
-	 */
-	getUserRelation({
-		mid,
-		signal,
-	}: {
-		mid: number
-		signal?: AbortSignal
-	}): ResultAsync<BilibiliUserRelation, BilibiliApiError> {
-		const params = getWbiEncodedParams({ mid: mid.toString() })
-		return params.andThen((encodedParams) =>
-			bilibiliApiClient
-				.get<{ relation: BilibiliUserRelation }>({
-					endpoint: '/x/space/wbi/acc/relation',
-					params: encodedParams,
-					signal,
-				})
-				.map((response) => response.relation),
-		)
 	}
 
 	/**

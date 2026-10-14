@@ -152,6 +152,7 @@ interface BilibiliRecommendationFeed {
 }
 
 interface BilibiliUserRelation {
+	mid: number
 	attribute: number
 }
 
@@ -159,6 +160,7 @@ interface BilibiliUserRelation {
  * 搜索结果视频信息
  */
 interface BilibiliSearchVideo {
+	type: string // 搜索结果类型，视频为 video；search_type=video 时也可能返回 ketang（B站课堂）
 	aid: number
 	bvid: string
 	title: string
@@ -358,6 +360,31 @@ interface BilibiliCollectionAllContents {
 	medias: BilibiliMediaItemInCollection[] | null
 }
 
+interface BilibiliSeriesMetadata {
+	meta: {
+		series_id: number
+		mid: number
+		name: string
+		description: string
+		total: number
+	}
+}
+
+interface BilibiliSeriesArchives {
+	page: { num: number; size: number; total: number }
+	archives:
+		| {
+				aid: number
+				bvid: string
+				title: string
+				pic: string
+				duration: number
+				pubdate: number
+				upMid: number
+		  }[]
+		| null
+}
+
 /**
  * 分 p 视频数据
  */
@@ -461,6 +488,7 @@ interface BilibiliSearchSuggestionItem {
 }
 
 interface BilibiliWebPlayerInfo {
+	view_points?: { type?: number; from: number; to: number; content: string }[]
 	bgm_info?: {
 		music_id: number
 		music_title: string
@@ -714,22 +742,14 @@ interface BilibiliGarbAssetBagResponse {
 	collect_list?: BilibiliGarbCollectEntry[]
 }
 
-interface BilibiliDanmakuItem {
-	id: number | Long
-	progress: number // 弹幕出现时间（ms）
-	mode: number // 弹幕模式：1/2/3：滚动；4：底部；5：顶部
-	fontsize?: 18 | 25 | 36 | null // 我们可能不会使用这个值，统一归一化
-	color?: number | null // 十进制 RGB888
-	content: string // 弹幕内容
-	weight?: number | null // 弹幕权重 [0-10]，我们在过滤弹幕时有用，值越大权重越高
-}
-
 export type {
 	BilibiliAudioStreamParams,
 	BilibiliAudioStreamResponse,
 	BilibiliCaptchaTokenData,
 	BilibiliCollection,
 	BilibiliCollectionAllContents,
+	BilibiliSeriesMetadata,
+	BilibiliSeriesArchives,
 	BilibiliCollectionContent,
 	BilibiliCollectionInfo,
 	BilibiliCommentContent,
@@ -737,7 +757,6 @@ export type {
 	BilibiliCommentItem,
 	BilibiliCommentMember,
 	BilibiliCommentsResponse,
-	BilibiliDanmakuItem,
 	BilibiliDealFavoriteForOneVideoResponse,
 	BilibiliFavoriteListAllContents,
 	BilibiliFavoriteListContent,
@@ -776,3 +795,24 @@ export { BilibiliQrCodeLoginStatus }
 
 export type * from './garb'
 export type * from './bilibili-dynamic'
+
+export interface BilibiliFollowingProfile {
+	mid: number
+	uname: string
+	face: string
+	sign: string
+}
+
+export interface BilibiliFollowing
+	extends BilibiliUserRelation, BilibiliFollowingProfile {}
+
+export interface BilibiliFollowingsResponse {
+	list: BilibiliFollowing[] | null
+	total: number
+}
+
+export interface BilibiliFollowingGroup {
+	tagid: number
+	name: string
+	count: number
+}

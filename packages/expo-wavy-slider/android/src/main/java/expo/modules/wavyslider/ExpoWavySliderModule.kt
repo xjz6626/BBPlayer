@@ -17,10 +17,21 @@ class ExpoWavySliderModule : Module() {
         Name("ExpoWavySlider")
 
         Class(WorkletCallback::class) {
-            Constructor { worklet: Worklet ->
+            Constructor { worklet: Worklet? ->
                 val callback = WorkletCallback()
                 callback.worklet = worklet
                 callback
+            }
+
+            Function("setWorklet") { callback: WorkletCallback, worklet: Worklet? ->
+                // Serialize updates with invocations on the UI thread, including removal.
+                if (Looper.getMainLooper().isCurrentThread) {
+                    callback.worklet = worklet
+                } else {
+                    appContext.mainQueue.launch {
+                        callback.worklet = worklet
+                    }
+                }
             }
 
             Property("__expo_wavy_slider_shared_object__") { _: WorkletCallback ->
@@ -90,6 +101,10 @@ class ExpoWavySliderModule : Module() {
 
             Prop("upperLimit", null as Float?) { view: ExpoWavySliderView, upperLimit: Float? ->
                 view.upperLimit = upperLimit
+            }
+
+            Prop("chapterMarkers") { view: ExpoWavySliderView, markers: List<Float> ->
+                view.chapterMarkers = markers.filter { it.isFinite() && it > 0f && it < 1f }.distinct().sorted()
             }
 
             Prop("enabled") { view: ExpoWavySliderView, enabled: Boolean ->

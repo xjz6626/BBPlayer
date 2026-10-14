@@ -4,12 +4,35 @@ import { Platform } from 'react-native'
 import type {
 	AppUpdateDownloadOptions,
 	AppUpdateInstallResult,
+	StorageEntry,
+	StorageUsage,
 	UnzipOptions,
 	UnzipResult,
 } from './BBPlayerNative.types'
 
 declare class BBPlayerNativeModule extends NativeModule {
+	/**
+	 * 当前 APK 签名证书的 SHA-256 指纹（小写十六进制），模块初始化时计算一次。
+	 * 取不到时为空字符串。
+	 */
+	readonly apkSigningCertificateSha256: string
 	getSupportedAbisAsync(): Promise<string[]>
+	/**
+	 * Android 应用私有目录中的各项占用，以及安装包大小（字节）。
+	 */
+	getStorageUsageAsync(): Promise<StorageUsage>
+	/**
+	 * 清理运行数据缓存：删除 `cacheDir` 中除 Media3 LRU 缓存外的全部内容。
+	 *
+	 * 不会删除离线下载；Media3 LRU 缓存由 `@bbplayer/orpheus` 单独清理。
+	 */
+	clearCacheAsync(): Promise<void>
+	/**
+	 * 只读列出应用私有目录（`dataDir`）下 `path` 的内容。
+	 *
+	 * `path` 为相对 `dataDir` 的路径，空字符串表示根目录。
+	 */
+	listStorageDirectoryAsync(path: string): Promise<StorageEntry[]>
 	canRequestPackageInstallsAsync(): Promise<boolean>
 	openPackageInstallerSettingsAsync(): Promise<void>
 	downloadAndInstallApkAsync(
@@ -27,9 +50,7 @@ let nativeModule: BBPlayerNativeModule | null = null
 
 const getNativeModule = () => {
 	if (Platform.OS !== 'android') {
-		throw new Error(
-			'BBPlayerNative app updates are only implemented on Android',
-		)
+		throw new Error('BBPlayerNative is only implemented on Android')
 	}
 	nativeModule ??= requireNativeModule<BBPlayerNativeModule>('BBPlayerNative')
 	return nativeModule
@@ -40,6 +61,46 @@ export const canRequestPackageInstallsAsync = () =>
 
 export const getSupportedAbisAsync = () =>
 	getNativeModule().getSupportedAbisAsync()
+
+/**
+ * Android 应用私有目录中的各项占用，以及安装包大小（字节）。
+ *
+ * Media3 的下载、封面与在线播放缓存目录由 `@bbplayer/orpheus` 写入，这里只做只读统计。
+ */
+export const getStorageUsageAsync = () =>
+	getNativeModule().getStorageUsageAsync()
+
+/**
+ * 清理运行数据缓存：删除 `cacheDir` 中除 Media3 LRU 缓存外的全部内容。
+ *
+ * 不会删除离线下载；Media3 LRU 缓存由 `@bbplayer/orpheus` 单独清理。
+ */
+export const clearCacheAsync = () => getNativeModule().clearCacheAsync()
+
+/**
+ * 只读列出应用私有目录（`dataDir`）下 `path` 的内容。
+ *
+ * `path` 为相对 `dataDir` 的路径，空字符串表示根目录。
+ */
+export const listStorageDirectoryAsync = (path: string) =>
+	getNativeModule().listStorageDirectoryAsync(path)
+
+/**
+ * 当前 APK 签名证书的 SHA-256 指纹（小写十六进制）。
+ *
+ * 仅用于判断构建来源，不构成安全保证：仓库开源，fork 可以直接改掉这段逻辑。
+ * 仅 Android 可用；iOS、Expo Go 或原生模块不可用时返回 null。
+ */
+export const getApkSigningCertificateSha256 = (): string | null => {
+	if (Platform.OS !== 'android') return null
+	try {
+		const value = getNativeModule().apkSigningCertificateSha256
+		return value ? value.toLowerCase() : null
+	} catch {
+		// 原生模块不可用（例如 Expo Go）时无法校验签名
+		return null
+	}
+}
 
 export const openPackageInstallerSettingsAsync = () =>
 	getNativeModule().openPackageInstallerSettingsAsync()

@@ -19,6 +19,7 @@ export const useModifyUserRelation = () =>
 			const previous =
 				context.client.getQueryData<BilibiliUserRelation>(queryKey)
 			context.client.setQueryData<BilibiliUserRelation>(queryKey, {
+				mid,
 				attribute: follow ? 2 : 0,
 			})
 			return { previous }

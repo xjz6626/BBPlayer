@@ -5,6 +5,85 @@
 项目的 CHANGELOG 格式符合 [Keep a Changelog]，
 且版本号遵循 [Semantic Versioning]。 ~~(然而，事实上遵循的是 [Pride Versioning])~~
 
+## [2.7.0] - 2026-09-24
+
+### Added
+
+- 播放器支持播客模式——可以断点续播、查看章节、快进快退
+- 播放器页面背景支持流光背景
+- 播放器控制按钮支持长按显示提示
+- 本地歌单支持清除失效视频
+- 支持浏览并同步 B 站的「系列」视频列表
+- 增加存储管理页面
+- 播放列表页面支持拖拽排序
+- 主页右上角增加前往 GitHub 点 Star 的入口
+
+### Fixed
+
+- 修复选择「启动时打开页面」不生效的问题
+- 修复音乐库标签页始终停留在第一页的问题
+- 修复正在播放条在部分场景下模态框显示异常的问题
+- 修复上报播放记录失败时弹出提示的问题
+- 修复获取视频收藏状态时数据为 `null` 导致的报错
+- 修复本地歌单全选/反选失效的问题
+- 修复在部分分页播放列表页面错误显示全选/反选功能的问题
+- 修复 WavySlider 在切歌时会出现 use-after-free 的问题
+- 避免将音源、网络或设备侧的播放器报错上报到 sentry
+- 修复删除歌单时因竞态导致的 404 问题
+- 有条件地渲染歌单页选择框，优化性能
+- 在搜索页面过滤掉“课堂”类型的视频
+- 修复在播放列表为空时切换随机模式时报错
+- 修复 expo-ui 因竞态重入导致的崩溃问题
+- 修复 SharedObject use-after-free 导致的崩溃问题
+- 修复调用原生方法时 MediaController 还未初始化完成的问题
+
+### Changed
+
+- 恢复正在播放列表到 TrueSheet 实现
+- 优化进入播放列表页面时的性能
+- 优化播放器页面性能
+- 将 NowPlayingBar 挂载到根布局，并使用 `react-native-ease` 执行布局动画
+- 播放速度调节由按钮改为滑块
+- 升级 TrueSheet 到 v4
+- 音乐库改用更轻量的 Skeleton 实现
+- 在根布局引入 react-freeze，冻结非活动标签页
+- 升级 `react-native-pager-view` 到 9.0.4
+- 功能菜单完全迁移到 Expo UI
+- 优化远程歌单头部的操作按钮
+- 移除分页歌单的全选功能
+- 同步上游 react-native-bottom-tabs 依赖
+- 重构设置页面分组
+
+## [2.6.5] - 2026-09-04
+
+### Added
+
+- 支持通过 WebDAV 手动备份和恢复本地歌单与应用设置
+- 使用自己开发的热更新后端
+- 可在播放列表页跳转到当前播放项
+
+### Changed
+
+- 集成 expo-observer navigation matrics
+- 使用 `react-native-nitro-fetch` 替换内置 fetch
+- 彻底移除弹幕相关代码
+- 备份格式升级至 v2；旧版本备份不再支持导入
+- 将 PlayerQueue 切换到 `@swmansion/react-native-bottom-sheet` 实现
+- 切换到轻量实现的 SplashVideoView，不再使用 expo-video
+- 升级大量依赖
+
+### Fixed
+
+- 修复 Android 深色模式下启动页背景颜色不一致的问题
+- 初始化频谱显示时正确捕获错误
+- 修复大量 oxlint 报错
+- 网易云部分特殊格式歌词解析失败
+- 展开分 p 同步收藏夹失败
+- 清除歌词后无法编辑
+- 存在自定义 AppBar 背景时文字对比度不够
+- 桌面歌词/状态栏歌词无法更新
+- 修复 BBPLAYER-A2
+
 ## [2.6.4] - 2026-08-08
 
 ### Added
@@ -208,7 +287,7 @@
 - 状态栏歌词
 - 导出歌曲
 
-## [2.3.2] - 2023-02-25
+## [2.3.2] - 2026-02-25
 
 ### Added
 
@@ -588,7 +667,7 @@
 
 <!-- Versions -->
 
-[unreleased]: https://github.com/bbplayer-app/BBPlayer/compare/v2.6.4...HEAD
+[unreleased]: https://github.com/bbplayer-app/BBPlayer/compare/v2.7.0...HEAD
 [1.3.2]: https://github.com/bbplayer-app/BBPlayer/compare/v1.3.1...v1.3.2
 [1.3.3]: https://github.com/bbplayer-app/BBPlayer/compare/v1.3.2...v1.3.3
 [1.3.4]: https://github.com/bbplayer-app/BBPlayer/compare/v1.3.3...v1.3.4
@@ -617,3 +696,5 @@
 [2.6.1]: https://github.com/bbplayer-app/BBPlayer/compare/v2.6.0...v2.6.1
 [2.6.2]: https://github.com/bbplayer-app/BBPlayer/compare/v2.6.1...v2.6.2
 [2.6.4]: https://github.com/bbplayer-app/BBPlayer/compare/v2.6.2...v2.6.4
+[2.6.5]: https://github.com/bbplayer-app/BBPlayer/compare/v2.6.4...v2.6.5
+[2.7.0]: https://github.com/bbplayer-app/BBPlayer/compare/v2.6.5...v2.7.0

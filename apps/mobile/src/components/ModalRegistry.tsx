@@ -6,6 +6,7 @@ import type { ModalKey, ModalPropsMap } from '@/types/navigation'
 const AlertModal = lazy(() => import('./modals/AlertModal'))
 const DonationQRModal = lazy(() => import('./modals/app/DonationQRModal'))
 const UpdateAppModal = lazy(() => import('./modals/app/UpdateAppModal'))
+const StarPromptModal = lazy(() => import('./modals/app/StarPromptModal'))
 const AddToFavoriteListsModal = lazy(
 	() => import('./modals/bilibili/AddVideoToBilibiliFavModal'),
 )
@@ -49,8 +50,8 @@ const SongShareModal = lazy(() => import('./modals/player/SongShareModal'))
 const SyncLocalToBilibiliModal = lazy(
 	() => import('./modals/playlist/SyncLocalToBilibiliModal'),
 )
-const FavoriteSyncProgressModal = lazy(
-	() => import('./modals/playlist/FavoriteSyncProgressModal'),
+const PlaylistSyncProgressModal = lazy(
+	() => import('./modals/playlist/PlaylistSyncProgressModal'),
 )
 const SyncOptionsModal = lazy(
 	() => import('./modals/playlist/SyncOptionsModal'),
@@ -61,9 +62,6 @@ const ManualMatchExternalSyncModal = lazy(
 
 const InputExternalPlaylistInfoModal = lazy(
 	() => import('./modals/playlist/InputExternalPlaylistInfo'),
-)
-const DanmakuSettingsModal = lazy(
-	() => import('./modals/player/DanmakuSettingsModal'),
 )
 const CoverDownloadProgressModal = lazy(
 	() => import('./modals/settings/CoverDownloadProgressModal'),
@@ -106,12 +104,12 @@ export const modalRegistry: { [K in ModalKey]: ModalComponent<K> } = {
 	SongShare: SongShareModal,
 	SyncLocalToBilibili: SyncLocalToBilibiliModal,
 	SyncOptions: SyncOptionsModal,
-	FavoriteSyncProgress: FavoriteSyncProgressModal,
+	PlaylistSyncProgress: PlaylistSyncProgressModal,
 	ManualMatchExternalSync: ManualMatchExternalSyncModal,
-	DanmakuSettings: DanmakuSettingsModal,
 	CoverDownloadProgress: CoverDownloadProgressModal,
 	SkinDownloadProgress: SkinDownloadProgressModal,
 	EnableSharing: EnableSharingModal,
 	SubscribeToSharedPlaylist: SubscribeToSharedPlaylistModal,
 	MergePlaylists: MergePlaylistsModal,
+	StarPrompt: StarPromptModal,
 }

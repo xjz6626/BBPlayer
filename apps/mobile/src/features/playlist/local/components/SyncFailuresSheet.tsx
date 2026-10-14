@@ -2,11 +2,10 @@ import type { TrueSheet } from '@lodev09/react-native-true-sheet'
 import { TrueSheet as TrueSheetComponent } from '@lodev09/react-native-true-sheet'
 import { and, eq, inArray } from 'drizzle-orm'
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite'
-import { forwardRef, useState } from 'react'
+import { forwardRef, useRef, useState } from 'react'
 import { ScrollView, StyleSheet, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { Icon, Text, useTheme } from 'react-native-paper'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import ActivityIndicator from '@/components/common/ActivityIndicator'
 import Button from '@/components/common/Button'
@@ -62,7 +61,7 @@ interface Props {
 export const SyncFailuresSheet = forwardRef<TrueSheet, Props>(
 	function SyncFailuresSheet({ playlistId, useMockData = false }, ref) {
 		const { colors } = useTheme()
-		const insets = useSafeAreaInsets()
+		const scrollViewRef = useRef<ScrollView>(null)
 		const [loading, setLoading] = useState(false)
 
 		const { data: dbRows } = useLiveQuery(
@@ -121,15 +120,14 @@ export const SyncFailuresSheet = forwardRef<TrueSheet, Props>(
 		return (
 			<TrueSheetComponent
 				ref={ref}
-				detents={[0.5]}
+				detents={['auto']}
 				cornerRadius={24}
 				backgroundColor={colors.elevation.level1}
-				scrollable
+				style={{ flex: 1 }}
+				scrollableRef={scrollViewRef}
 			>
-				<GestureHandlerRootView style={{ flexGrow: 1 }}>
-					<View
-						style={[styles.container, { paddingBottom: insets.bottom + 20 }]}
-					>
+				<GestureHandlerRootView style={{ flex: 1 }}>
+					<View style={styles.container}>
 						<Text
 							variant='titleLarge'
 							style={styles.title}
@@ -149,6 +147,7 @@ export const SyncFailuresSheet = forwardRef<TrueSheet, Props>(
 							</View>
 						) : (
 							<ScrollView
+								ref={scrollViewRef}
 								style={styles.listContent}
 								nestedScrollEnabled
 							>
@@ -206,9 +205,9 @@ export const SyncFailuresSheet = forwardRef<TrueSheet, Props>(
 
 const styles = StyleSheet.create({
 	container: {
+		flex: 1,
 		paddingTop: 16,
 		paddingHorizontal: 16,
-		maxHeight: 500,
 	},
 	title: {
 		fontWeight: 'bold',
@@ -222,7 +221,7 @@ const styles = StyleSheet.create({
 		justifyContent: 'center',
 	},
 	listContent: {
-		maxHeight: 300,
+		flex: 1,
 	},
 	row: {
 		flexDirection: 'row',

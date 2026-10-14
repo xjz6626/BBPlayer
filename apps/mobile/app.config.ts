@@ -15,10 +15,17 @@ import expoWebBrowser from 'expo-web-browser/plugin'
 import type { ConfigContext, ExpoConfig } from 'expo/config'
 import bootsplash from 'react-native-bootsplash/expo'
 
+import bootSplashColors from './boot-splash-colors.json'
 import { version } from './package.json'
 
 const IS_DEV = process.env.APP_VARIANT === 'development'
 const IS_PREVIEW = process.env.APP_VARIANT === 'preview'
+const UPDATE_SERVER_URL = 'https://updates.bbplayer.roitium.com'
+const UPDATE_CHANNEL = IS_DEV
+	? 'development'
+	: IS_PREVIEW
+		? 'preview'
+		: 'production'
 
 const VERSION_CODE_EPOCH_MS = Date.UTC(2026, 0, 1)
 const MAX_ANDROID_VERSION_CODE = 2_100_000_000
@@ -131,7 +138,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
 			),
 			package: getUniqueIdentifier(),
 			versionCode: versionCode,
-			runtimeVersion: version,
+			runtimeVersion: { policy: 'appVersion' },
 			intentFilters: [
 				{
 					action: 'VIEW',
@@ -160,6 +167,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
 			],
 		},
 		plugins: [
+			'./expo-plugins/withProductionDebugSigning',
 			'./expo-plugins/withKotlinSerialization',
 			// './expo-plugins/withAndroidPlugin',
 			'./expo-plugins/withAndroidGradleProperties',
@@ -178,15 +186,22 @@ export default ({ config }: ConfigContext): ExpoConfig => {
 			bootsplash({
 				logo: './assets/images/splash-icon.png',
 				logoWidth: 120,
-				background: '#ffffff',
+				background: bootSplashColors.light,
 				assetsOutput: 'assets/bootsplash',
 			}),
+			'./expo-plugins/withDynamicBootSplash',
 			[
 				'@sentry/react-native/expo',
 				{
 					url: 'https://sentry.io/',
 					project: 'bbplayer',
 					organization: 'roitium',
+					experimental_android: {
+						enableAndroidGradlePlugin: true,
+						uploadNativeSymbols: true,
+						autoUploadNativeSymbols: true,
+						includeNativeSources: true,
+					},
 				},
 			],
 			expoBuildProperties({
@@ -288,7 +303,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
 					multipleShareMimeTypes: ['text/*'],
 				},
 			}),
-			'expo-video',
+			'react-native-nitro-fetch',
+			'expo-secure-store',
 		],
 		experiments: {
 			reactCompiler: true,
@@ -299,15 +315,12 @@ export default ({ config }: ConfigContext): ExpoConfig => {
 			eas: {
 				projectId: '1cbd8d50-e322-4ead-98b6-4ee8b6f2a707',
 			},
+			updateServerUrl: UPDATE_SERVER_URL,
+			updateChannel: UPDATE_CHANNEL,
 			updateReleaseTag: 'nightly',
 			updateRepository: 'xjz6626/BBPlayer',
 		},
 		owner: 'roitium',
-		updates: {
-			url: 'https://u.expo.dev/1cbd8d50-e322-4ead-98b6-4ee8b6f2a707',
-			checkAutomatically: 'NEVER',
-			enableBsdiffPatchSupport: true,
-		},
 		ios: {
 			bundleIdentifier: 'com.roitium.bbplayer',
 			runtimeVersion: {
@@ -317,6 +330,19 @@ export default ({ config }: ConfigContext): ExpoConfig => {
 				googleServicesPlistPath,
 				googleServicesPlistRealPath,
 			),
+		},
+		updates: {
+			enabled: true,
+			url: `${UPDATE_SERVER_URL}/api/manifest`,
+			requestHeaders: {
+				'expo-channel-name': UPDATE_CHANNEL,
+				// 安装级稳定 id 的占位值。expo-updates 的 setUpdateRequestHeadersOverride
+				// 只能覆盖内嵌配置里已声明的 key（不能凭空新增），且空值会被部分
+				// HTTP 栈丢弃，因此这里预置一个非空占位值；客户端启动时会把真实
+				// installation uuid 写进来（见 src/lib/services/updateTelemetry.ts），
+				// 服务端对占位值直接忽略（见 apps/update-server api_insights.go）。
+				'x-bbplayer-installation-id': 'bbplayer-unset',
+			},
 		},
 	}
 }

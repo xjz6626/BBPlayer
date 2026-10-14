@@ -5,7 +5,7 @@ import { memo, useCallback, useDeferredValue, useMemo, useState } from 'react'
 import { StyleSheet, View } from 'react-native'
 import { Searchbar, Text, useTheme } from 'react-native-paper'
 
-import FunctionalMenu from '@/components/common/FunctionalMenu'
+import { MenuView } from '@/components/common/FunctionalMenu'
 import IconButton from '@/components/common/IconButton'
 import ThemedRefreshControl, {
 	ThemedRefreshIndicator,
@@ -19,6 +19,7 @@ import {
 } from '@/hooks/queries/db/playlist'
 import useAppStore from '@/hooks/stores/useAppStore'
 import { useModalStore } from '@/hooks/stores/useModalStore'
+import { useMenuActions } from '@/hooks/ui/useMenuActions'
 import type { Playlist } from '@/types/core/media'
 
 import LocalPlaylistItem from './LocalPlaylistItem'
@@ -60,7 +61,6 @@ const LocalPlaylistListComponent = memo(() => {
 	const haveTrack = useCurrentTrack()
 	const [refreshing, setRefreshing] = useState(false)
 	const [searchQuery, setSearchQuery] = useState('')
-	const [menuVisible, setMenuVisible] = useState(false)
 	const deferredSearchQuery = useDeferredValue(searchQuery)
 	const openModal = useModalStore((state) => state.open)
 	const hasBilibiliCookie = useAppStore((state) => state.hasBilibiliCookie)
@@ -110,6 +110,35 @@ const LocalPlaylistListComponent = memo(() => {
 		setRefreshing(false)
 	}
 
+	const menuActions = useMenuActions([
+		{
+			title: '新建播放列表',
+			image: CREATE_PLAYLIST_ICON,
+			onPress: () =>
+				openModal('CreatePlaylist', { redirectToNewPlaylist: true }),
+		},
+		{
+			title: '导入外部歌单',
+			image: IMPORT_PLAYLIST_ICON,
+			onPress: () => openModal('InputExternalPlaylistInfo', undefined),
+		},
+		{
+			title: '从评论文本导入',
+			image: IMPORT_TEXT_PLAYLIST_ICON,
+			onPress: () => router.push('/playlist/text-import'),
+		},
+		{
+			title: '订阅共享歌单',
+			image: SUBSCRIBE_PLAYLIST_ICON,
+			onPress: () => openModal('SubscribeToSharedPlaylist', undefined),
+		},
+		{
+			title: '动态合并歌单',
+			image: MERGE_PLAYLIST_ICON,
+			onPress: () => openModal('MergePlaylists', undefined),
+		},
+	])
+
 	if (playlistsIsPending) {
 		return <LocalPlaylistListSkeleton />
 	}
@@ -136,58 +165,12 @@ const LocalPlaylistListComponent = memo(() => {
 					<Text variant='bodyMedium'>
 						{playlists.length ?? 0}&thinsp;个播放列表
 					</Text>
-					<FunctionalMenu
-						visible={menuVisible}
-						onDismiss={() => setMenuVisible(false)}
-						anchor={
-							<IconButton
-								icon='plus'
-								size={20}
-								onPress={() => setMenuVisible(true)}
-							/>
-						}
-					>
-						<FunctionalMenu.Item
-							leadingIcon={CREATE_PLAYLIST_ICON}
-							onPress={() => {
-								setMenuVisible(false)
-								openModal('CreatePlaylist', { redirectToNewPlaylist: true })
-							}}
-							title='新建播放列表'
+					<MenuView {...menuActions}>
+						<IconButton
+							icon='plus'
+							size={20}
 						/>
-						<FunctionalMenu.Item
-							leadingIcon={IMPORT_PLAYLIST_ICON}
-							onPress={() => {
-								setMenuVisible(false)
-								openModal('InputExternalPlaylistInfo', undefined)
-							}}
-							title='导入外部歌单'
-						/>
-						<FunctionalMenu.Item
-							leadingIcon={IMPORT_TEXT_PLAYLIST_ICON}
-							onPress={() => {
-								setMenuVisible(false)
-								router.push('/playlist/text-import')
-							}}
-							title='从评论文本导入'
-						/>
-						<FunctionalMenu.Item
-							leadingIcon={SUBSCRIBE_PLAYLIST_ICON}
-							onPress={() => {
-								setMenuVisible(false)
-								openModal('SubscribeToSharedPlaylist', undefined)
-							}}
-							title='订阅共享歌单'
-						/>
-						<FunctionalMenu.Item
-							leadingIcon={MERGE_PLAYLIST_ICON}
-							onPress={() => {
-								setMenuVisible(false)
-								openModal('MergePlaylists', undefined)
-							}}
-							title='动态合并歌单'
-						/>
-					</FunctionalMenu>
+					</MenuView>
 				</View>
 			</View>
 			<Searchbar
@@ -242,13 +225,14 @@ const LocalPlaylistListComponent = memo(() => {
 })
 
 const styles = StyleSheet.create({
+	listFooter: { textAlign: 'center', marginVertical: 16 },
 	container: {
 		flex: 1,
 		marginHorizontal: 16,
 	},
 	headerContainer: {
 		height: 48,
-		marginBottom: 8,
+		marginBottom: 4,
 		flexDirection: 'row',
 		alignItems: 'center',
 		justifyContent: 'space-between',
@@ -268,12 +252,9 @@ const styles = StyleSheet.create({
 		textAlign: 'center',
 		height: 45,
 		marginBottom: 20,
-		marginTop: 10,
+		marginTop: 0,
 	},
-	listFooter: {
-		textAlign: 'center',
-		paddingTop: 10,
-	},
+
 	emptyList: {
 		textAlign: 'center',
 	},

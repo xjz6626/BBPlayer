@@ -151,7 +151,7 @@ export const PlaylistHeader = memo(function PlaylistHeader({
 				.filter((t) => !!t),
 		)
 		useModalStore.getState().doAfterModalHostClosed(() => {
-			router.push('/download')
+			router.navigate('/download')
 		})
 	}, [playlist.id, router])
 
@@ -466,6 +466,8 @@ const styles = StyleSheet.create({
 	},
 	actionButtons: {
 		flexDirection: 'row',
+		flexWrap: 'wrap',
+		gap: 8,
 		alignItems: 'center',
 	},
 	description: {

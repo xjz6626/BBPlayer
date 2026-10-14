@@ -7,7 +7,7 @@ import { Appbar, Avatar, Text, TextInput, useTheme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import Button from '@/components/common/Button'
-import NowPlayingBar from '@/components/NowPlayingBar'
+import SettingsSectionTitle from '@/components/common/SettingsSectionTitle'
 import useCurrentTrack from '@/hooks/player/useCurrentTrack'
 import { playlistKeys } from '@/hooks/queries/db/playlist'
 import useAppStore from '@/hooks/stores/useAppStore'
@@ -71,7 +71,7 @@ export default function AccountSettingsPage() {
 		}
 		playlistSyncWorker.triggerSync()
 		if (returnTo) {
-			router.replace(returnTo)
+			router.replace(returnTo as Parameters<typeof router.replace>[0])
 		}
 	}
 
@@ -125,9 +125,8 @@ export default function AccountSettingsPage() {
 			toast.error('读取 Bilibili 资料失败', {
 				description: e instanceof Error ? e.message : String(e),
 			})
-		} finally {
-			setIsFillingProfile(false)
 		}
+		setIsFillingProfile(false)
 	}
 
 	const handleRegister = async () => {
@@ -138,20 +137,28 @@ export default function AccountSettingsPage() {
 		}
 		setIsSubmitting(true)
 		setAuthStatusText('正在创建 BBPlayer 账号...')
+		const registerName = name.trim() || normalizedUsername
+		const registerFace = face.trim() || undefined
 		try {
 			setAuthStatusText('正在注册 BBPlayer 账号...')
 			const resp = await api.auth.register.$post({
 				json: {
 					username: normalizedUsername,
 					password,
-					name: name.trim() || normalizedUsername,
-					face: face.trim() || undefined,
+					name: registerName,
+					face: registerFace,
 				},
 			})
 			if (!resp.ok) {
-				throw new Error(
-					`注册失败：${resp.status} ${JSON.stringify(await resp.json().catch(() => ({})))}`,
+				const errBody = await resp.json().catch(() => ({}))
+				setAuthStatusText(null)
+				setIsSubmitting(false)
+				toastAndLogError(
+					'注册失败',
+					new Error(`注册失败：${resp.status} ${JSON.stringify(errBody)}`),
+					'Settings.Account',
 				)
+				return
 			}
 			const data = await resp.json()
 			setToken(data.token)
@@ -162,9 +169,8 @@ export default function AccountSettingsPage() {
 		} catch (e) {
 			setAuthStatusText(null)
 			toastAndLogError('注册失败', e, 'Settings.Account')
-		} finally {
-			setIsSubmitting(false)
 		}
+		setIsSubmitting(false)
 	}
 
 	const handleLogin = async () => {
@@ -183,9 +189,15 @@ export default function AccountSettingsPage() {
 				},
 			})
 			if (!resp.ok) {
-				throw new Error(
-					`登录失败：${resp.status} ${JSON.stringify(await resp.json().catch(() => ({})))}`,
+				const errBody = await resp.json().catch(() => ({}))
+				setAuthStatusText(null)
+				setIsSubmitting(false)
+				toastAndLogError(
+					'登录失败',
+					new Error(`登录失败：${resp.status} ${JSON.stringify(errBody)}`),
+					'Settings.Account',
 				)
+				return
 			}
 			const data = await resp.json()
 			setToken(data.token)
@@ -196,31 +208,37 @@ export default function AccountSettingsPage() {
 		} catch (e) {
 			setAuthStatusText(null)
 			toastAndLogError('登录失败', e, 'Settings.Account')
-		} finally {
-			setIsSubmitting(false)
 		}
+		setIsSubmitting(false)
 	}
 
 	const handleSaveProfile = async () => {
 		setIsSavingProfile(true)
+		const profileName = name.trim()
+		const profileFace = face.trim() || undefined
 		try {
 			const resp = await api.auth.profile.$patch({
 				json: {
-					name: name.trim(),
-					face: face.trim() || undefined,
+					name: profileName,
+					face: profileFace,
 				},
 			})
 			if (!resp.ok) {
-				throw new Error(`保存失败：${resp.status}`)
+				setIsSavingProfile(false)
+				toastAndLogError(
+					'保存资料失败',
+					new Error(`保存失败：${resp.status}`),
+					'Settings.Account',
+				)
+				return
 			}
 			const data = await resp.json()
 			setAccount(data.account)
 			toast.success('已保存')
 		} catch (e) {
 			toastAndLogError('保存资料失败', e, 'Settings.Account')
-		} finally {
-			setIsSavingProfile(false)
 		}
+		setIsSavingProfile(false)
 	}
 
 	return (
@@ -238,6 +256,10 @@ export default function AccountSettingsPage() {
 			>
 				{account ? (
 					<View style={styles.section}>
+						<SettingsSectionTitle
+							title='个人资料'
+							first
+						/>
 						<View style={styles.profileHeader}>
 							<View style={styles.avatarWrapper}>
 								{account.face ? (
@@ -297,6 +319,10 @@ export default function AccountSettingsPage() {
 					</View>
 				) : (
 					<View style={styles.section}>
+						<SettingsSectionTitle
+							title='登录 / 注册'
+							first
+						/>
 						<View style={styles.descriptionBlock}>
 							<Text variant='titleMedium'>登录 BBPlayer 账号</Text>
 							<Text
@@ -373,9 +399,6 @@ export default function AccountSettingsPage() {
 					</View>
 				)}
 			</ScrollView>
-			<View style={styles.nowPlayingBarContainer}>
-				<NowPlayingBar />
-			</View>
 		</View>
 	)
 }
@@ -419,11 +442,5 @@ const styles = StyleSheet.create({
 	profileText: {
 		flex: 1,
 		gap: 2,
-	},
-	nowPlayingBarContainer: {
-		position: 'absolute',
-		bottom: 0,
-		left: 0,
-		right: 0,
 	},
 })

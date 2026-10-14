@@ -2,6 +2,9 @@ import * as Sentry from '@sentry/react-native'
 import * as Application from 'expo-application'
 import Constants from 'expo-constants'
 import { err, ok, type Result } from 'neverthrow'
+import { fetch, prefetchOnAppStart } from 'react-native-nitro-fetch'
+
+const UPDATE_PREFETCH_KEY = 'update-manifest'
 
 export interface ReleaseInfo {
 	buildCommit?: string
@@ -26,6 +29,18 @@ interface UpdateSourceConfig {
 const getUpdateSourceConfig = (): UpdateSourceConfig => {
 	const extra = Constants?.expoConfig?.extra as UpdateSourceConfig | undefined
 	return extra ?? {}
+}
+
+export function registerUpdatePrefetch(): void {
+	const manifestUrl = getManifestUrl()
+	if (!manifestUrl) return
+	void prefetchOnAppStart(manifestUrl, { prefetchKey: UPDATE_PREFETCH_KEY })
+}
+
+const getManifestUrl = (): string | undefined => {
+	const { updateRepository, updateReleaseTag } = getUpdateSourceConfig()
+	if (!updateRepository || !updateReleaseTag) return undefined
+	return `https://github.com/${updateRepository}/releases/download/${encodeURIComponent(updateReleaseTag)}/nightly-update.json`
 }
 
 const toError = (e: unknown): Error =>

@@ -3,22 +3,22 @@ import type { Result } from 'neverthrow'
 type AppThemeMode = 'system' | 'light' | 'dark'
 
 interface Settings {
+	defaultPlayerMode: 'music' | 'podcast'
 	sendPlayHistory: boolean
 	enableDebugLog: boolean
 	enableOldSchoolStyleLyric: boolean
 	enableSpectrumVisualizer: boolean
 	themeMode: AppThemeMode
-	playerBackgroundStyle: 'gradient' | 'md3'
+	playerBackgroundStyle: 'gradient' | 'md3' | 'fluid'
 	nowPlayingBarStyle: 'float' | 'bottom'
 	lyricSource: 'auto' | 'netease' | 'qqmusic' | 'kugou'
 	enableVerbatimLyrics: boolean
 	enableDataCollection: boolean
-	enableDanmaku: boolean
-	danmakuFilterLevel: number
 	downloadMaxParallelTasks: number
 	enableMinimalistMode: boolean
 	allowSimultaneousPlayback: boolean
 	expandMultiPageOnSync: boolean | null // null = 用户尚未选择过（首次同步时询问）
+	hideStarPrompt: boolean // 用户是否点击过「不再显示」Star 提示
 }
 
 interface BilibiliUserSummary {

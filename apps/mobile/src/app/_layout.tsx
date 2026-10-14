@@ -6,8 +6,9 @@ import {
 import * as Sentry from '@sentry/react-native'
 import { focusManager, onlineManager } from '@tanstack/react-query'
 import * as Application from 'expo-application'
-import { Observe, ObserveRoot, useObserve } from 'expo-observe'
+import { Observe, ObserveRoot } from 'expo-observe'
 import { router, Stack } from 'expo-router'
+import * as Updates from 'expo-updates'
 import { useEffect, useState } from 'react'
 import type { AppStateStatus } from 'react-native'
 import { AppState, Platform, StyleSheet, View } from 'react-native'
@@ -18,17 +19,31 @@ import { Toaster } from 'sonner-native'
 import AnimatedBootSplash from '@/components/AnimatedBootSplash'
 import { alert } from '@/components/modals/AlertModal'
 import PlayerQueueModal from '@/components/modals/PlayerQueueModal'
+import NowPlayingBar from '@/components/NowPlayingBar'
 import AppProviders from '@/components/providers'
 import { useFeatureTracking } from '@/hooks/analytics/useFeatureTracking'
 import useCheckUpdate from '@/hooks/app/useCheckUpdate'
 import { useFastMigrations } from '@/hooks/app/useFastMigrations'
-import useAppStore, { serializeCookieObject } from '@/hooks/stores/useAppStore'
+import {
+	HIDDEN_SEGMENT_ROOTS,
+	nowPlayingBarStore$,
+	routeNameToSegmentRoot,
+} from '@/hooks/stores/nowPlayingBarStore'
+import { initPlaybackContextStore } from '@/hooks/stores/playbackContextStore'
+import { serializeCookieObject } from '@/hooks/stores/useAppStore'
+import useAppStoreObj from '@/hooks/stores/useAppStore'
 import { initPlayerQueueStore } from '@/hooks/stores/usePlayerQueueStore'
 import { usePlayerStore } from '@/hooks/stores/usePlayerStore'
 import { initializeSentry } from '@/lib/config/sentry'
 import drizzleDb from '@/lib/db/db'
+import { playerSideEffects } from '@/lib/player/PlayerSideEffects'
 import { analyticsService } from '@/lib/services/analyticsService'
 import lyricService from '@/lib/services/lyricService'
+import { registerUpdatePrefetch } from '@/lib/services/updateService'
+import {
+	reportUpdateActivity,
+	reportUpdateLaunch,
+} from '@/lib/services/updateTelemetry'
 import { playlistSyncWorker } from '@/lib/workers/PlaylistSyncWorker'
 import { ProjectScope } from '@/types/core/scope'
 import log, { cleanOldLogFiles, reportErrorToSentry } from '@/utils/log'
@@ -40,6 +55,7 @@ import migrations from '../../drizzle/migrations'
 const logger = log.extend('UI.RootLayout')
 
 Observe.configure({
+	dispatchingEnabled: useAppStoreObj.getState().settings.enableDataCollection,
 	integrations: { 'expo-router': true },
 })
 
@@ -77,9 +93,59 @@ const checkOverlayPermissionOnStart = async () => {
 	}
 }
 
+function runAppInit() {
+	try {
+		useAppStoreObj.getState()
+
+		registerUpdatePrefetch()
+
+		cleanOldLogFiles(7)
+			.andTee((deleted) => {
+				if (deleted > 0) {
+					logger.info(`已清理 ${deleted} 个旧日志文件`)
+				}
+			})
+			.orTee((e) => {
+				logger.warning('清理旧日志失败', { error: e.message })
+			})
+
+		void lyricService.migrateFromOldFormat()
+
+		initPlaybackContextStore()
+		usePlayerStore.getState().initialize()
+		playerSideEffects.initialize()
+
+		initPlayerQueueStore()
+
+		void checkOverlayPermissionOnStart()
+
+		try {
+			const settings = useAppStoreObj.getState().settings
+			void Orpheus.setDownloadMaxParallelTasks(
+				settings.downloadMaxParallelTasks,
+			)
+			void Orpheus.setAllowSimultaneousPlayback(
+				settings.allowSimultaneousPlayback,
+			)
+			const cookie = useAppStoreObj.getState().bilibiliCookie
+			if (cookie) {
+				logger.debug('初始化 orpheus bilibili cookie')
+				Orpheus.setBilibiliCookie(serializeCookieObject(cookie))
+			} else {
+				logger.info('没有 bilibili cookie，跳过播放器初始化')
+			}
+		} catch (error) {
+			logger.error('播放器初始化失败: ', error)
+			reportErrorToSentry(error, '播放器初始化失败', ProjectScope.Player)
+		}
+	} catch (error) {
+		logger.error('初始化失败:', error)
+		reportErrorToSentry(error, '初始化失败', ProjectScope.UI)
+	}
+}
+
 function RootLayout() {
 	const [isReady, setIsReady] = useState(false)
-	const { markInteractive } = useObserve()
 	const { success: migrationsSuccess, error: migrationsError } =
 		useFastMigrations(drizzleDb, migrations)
 	useCheckUpdate()
@@ -108,6 +174,7 @@ function RootLayout() {
 			}
 		}
 		void logAppInfo()
+		reportUpdateActivity()
 
 		onAppStateChange(AppState.currentState)
 		const subscription = AppState.addEventListener('change', onAppStateChange)
@@ -115,66 +182,37 @@ function RootLayout() {
 	}, [])
 
 	useEffect(() => {
-		try {
-			useAppStore.getState()
+		runAppInit()
+		// oxlint-disable-next-line react-you-might-not-need-an-effect/no-initialize-state, set-state-in-effect
+		setIsReady(true)
+	}, [])
 
-			// 清理旧日志
-			cleanOldLogFiles(7)
-				.andTee((deleted) => {
-					if (deleted > 0) {
-						logger.info(`已清理 ${deleted} 个旧日志文件`)
+	useEffect(() => {
+		if (__DEV__ || !Updates.isEnabled) {
+			return
+		}
+
+		const listener = AppState.addEventListener('focus', () => {
+			Updates.checkForUpdateAsync()
+				.then((result) => {
+					if (result.isAvailable) {
+						logger.debug('有新的热更新，开始下载', result)
+						Updates.fetchUpdateAsync().catch((e) => {
+							logger.error('热更新下载失败', e)
+						})
 					}
 				})
-				.orTee((e) => {
-					logger.warning('清理旧日志失败', { error: e.message })
+				.catch((error: Error) => {
+					logger.error('检查热更新失败', error)
 				})
+		})
 
-			// 迁移旧格式歌词
-			void lyricService.migrateFromOldFormat()
-
-			// 初始化播放器状态
-			usePlayerStore.getState().initialize()
-
-			// 初始化播放队列监听
-			initPlayerQueueStore()
-
-			// 桌面歌词权限启动检查
-			void checkOverlayPermissionOnStart()
-
-			// 初始化播放器 Cookie
-			try {
-				const settings = useAppStore.getState().settings
-				void Orpheus.setDownloadMaxParallelTasks(
-					settings.downloadMaxParallelTasks,
-				)
-				void Orpheus.setAllowSimultaneousPlayback(
-					settings.allowSimultaneousPlayback,
-				)
-
-				const cookie = useAppStore.getState().bilibiliCookie
-				if (cookie) {
-					logger.debug('初始化 orpheus bilibili cookie')
-					Orpheus.setBilibiliCookie(serializeCookieObject(cookie))
-				} else {
-					logger.info('没有 bilibili cookie，跳过播放器初始化')
-				}
-			} catch (error) {
-				logger.error('播放器初始化失败: ', error)
-				reportErrorToSentry(error, '播放器初始化失败', ProjectScope.Player)
-			}
-		} catch (error) {
-			logger.error('初始化失败:', error)
-			reportErrorToSentry(error, '初始化失败', ProjectScope.UI)
-		} finally {
-			// oxlint-disable-next-line react-you-might-not-need-an-effect/no-initialize-state
-			setIsReady(true)
-		}
+		return () => listener.remove()
 	}, [])
 
 	useEffect(() => {
 		if (isReady && migrationsSuccess) {
-			markInteractive()
-
+			reportUpdateLaunch()
 			// 恢复上次被中断的同步任务（syncing → pending），并触发同步
 			playlistSyncWorker.recoverStuckRows().catch((error) => {
 				logger.error('恢复同步任务失败:', error)
@@ -182,10 +220,10 @@ function RootLayout() {
 
 			const firstOpen = storage.getBoolean('first_open') ?? true
 			if (firstOpen) {
-				router.push('/onboarding')
+				router.navigate('/onboarding')
 			}
 		}
-	}, [isReady, migrationsSuccess, markInteractive])
+	}, [isReady, migrationsSuccess])
 
 	useEffect(() => {
 		if (migrationsError) {
@@ -207,9 +245,52 @@ function RootLayout() {
 		<View style={styles.appContainer}>
 			<AppProviders>
 				{migrationsSuccess && isReady ? (
-					<Stack screenOptions={{ headerShown: false }}>
+					<Stack
+						screenOptions={{ headerShown: false }}
+						screenListeners={({ route, navigation }) => ({
+							focus: () => {
+								// 进入隐藏页面时立即隐藏播放条；离开时不在这里恢复，
+								// 而是等到 transitionEnd，行为与 player 页面一致。
+								if (
+									route.name !== 'modal' &&
+									HIDDEN_SEGMENT_ROOTS.has(routeNameToSegmentRoot(route.name))
+								) {
+									nowPlayingBarStore$.hiddenScreenActive.set(true)
+								}
+							},
+							transitionEnd: ({ data }) => {
+								const state = navigation.getState()
+								// 被 pop 的页面已不在导航状态中，其 closing 事件会被丢弃。
+								// 等当前目标页面 onAppear，且忽略旧页面迟到的转场事件。
+								if (
+									!data.closing &&
+									state.routes[state.index]?.key === route.key
+								) {
+									// 返回动画结束后，才根据目标页面决定是否恢复播放条。
+									if (route.name !== 'modal') {
+										nowPlayingBarStore$.hiddenScreenActive.set(
+											HIDDEN_SEGMENT_ROOTS.has(
+												routeNameToSegmentRoot(route.name),
+											),
+										)
+									}
+
+									// Modal 需要沿用其底层页面的位置；其余非 Tab 页面不能
+									// 继承此前 Tab 页留下的高度。
+									if (route.name !== '(tabs)' && route.name !== 'modal') {
+										nowPlayingBarStore$.retainedBottomTabBarHeight.set(0)
+									}
+								}
+							},
+						})}
+					>
 						<Stack.Screen
 							name='(tabs)'
+							options={{ headerShown: false }}
+						/>
+
+						<Stack.Screen
+							name='performance'
 							options={{ headerShown: false }}
 						/>
 
@@ -237,6 +318,10 @@ function RootLayout() {
 						/>
 						<Stack.Screen
 							name='playlist/remote/collection/[id]'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='playlist/remote/series/[id]'
 							options={{ headerShown: false }}
 						/>
 						<Stack.Screen
@@ -275,6 +360,10 @@ function RootLayout() {
 						/>
 						<Stack.Screen
 							name='download'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='following'
 							options={{ headerShown: false }}
 						/>
 
@@ -321,15 +410,15 @@ function RootLayout() {
 							options={{ headerShown: false }}
 						/>
 						<Stack.Screen
-							name='settings/appearance'
+							name='settings/index'
 							options={{ headerShown: false }}
 						/>
 						<Stack.Screen
-							name='settings/theme'
+							name='settings/appearance/index'
 							options={{ headerShown: false }}
 						/>
 						<Stack.Screen
-							name='settings/theme/search'
+							name='settings/appearance/theme-search'
 							options={{ headerShown: false }}
 						/>
 						<Stack.Screen
@@ -341,11 +430,19 @@ function RootLayout() {
 							options={{ headerShown: false }}
 						/>
 						<Stack.Screen
-							name='settings/download'
+							name='settings/storage'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='settings/app-data'
 							options={{ headerShown: false }}
 						/>
 						<Stack.Screen
 							name='settings/general'
+							options={{ headerShown: false }}
+						/>
+						<Stack.Screen
+							name='settings/backup'
 							options={{ headerShown: false }}
 						/>
 						<Stack.Screen
@@ -360,6 +457,7 @@ function RootLayout() {
 				) : null}
 				<Toaster />
 				<PlayerQueueModal />
+				<NowPlayingBar />
 			</AppProviders>
 			<AnimatedBootSplash ready={isReady && migrationsSuccess} />
 		</View>

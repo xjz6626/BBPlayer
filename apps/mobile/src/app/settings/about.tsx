@@ -15,13 +15,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import Button from '@/components/common/Button'
-import NowPlayingBar from '@/components/NowPlayingBar'
 import useCurrentTrack from '@/hooks/player/useCurrentTrack'
 import toast from '@/utils/toast'
-
-const updateTime = Updates.createdAt
-	? `${Updates.createdAt.getFullYear()}-${Updates.createdAt.getMonth() + 1}-${Updates.createdAt.getDate()}`
-	: ''
 
 const openExternalLink = async (url: string) => {
 	try {
@@ -33,6 +28,10 @@ const openExternalLink = async (url: string) => {
 		})
 	}
 }
+
+const updateTime = Updates.createdAt
+	? `${Updates.createdAt.getFullYear()}-${Updates.createdAt.getMonth() + 1}-${Updates.createdAt.getDate()}`
+	: ''
 
 export default function AboutSettingsPage() {
 	const router = useRouter()
@@ -100,24 +99,6 @@ export default function AboutSettingsPage() {
 				</Surface>
 				<View style={styles.section}>
 					<List.Item
-						title='开源许可证'
-						description='使用到的开源库'
-						left={(props) => (
-							<List.Icon
-								{...props}
-								icon='file-certificate'
-							/>
-						)}
-						right={(props) => (
-							<List.Icon
-								{...props}
-								icon='chevron-right'
-							/>
-						)}
-						onPress={() => router.push('/settings/about/licenses')}
-					/>
-					<Divider />
-					<List.Item
 						title='项目主页'
 						description='github.com/bbplayer-app/BBPlayer'
 						left={(props) => (
@@ -158,9 +139,6 @@ export default function AboutSettingsPage() {
 					/>
 				</View>
 			</ScrollView>
-			<View style={styles.nowPlayingBarContainer}>
-				<NowPlayingBar />
-			</View>
 		</View>
 	)
 }
@@ -190,11 +168,5 @@ const styles = StyleSheet.create({
 	section: {
 		borderRadius: 8,
 		overflow: 'hidden',
-	},
-	nowPlayingBarContainer: {
-		position: 'absolute',
-		bottom: 0,
-		left: 0,
-		right: 0,
 	},
 })

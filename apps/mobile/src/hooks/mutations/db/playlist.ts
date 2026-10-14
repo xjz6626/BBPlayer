@@ -8,7 +8,7 @@ import { CustomError } from '@/lib/errors'
 import { createValidationError } from '@/lib/errors/service'
 import { playlistFacade } from '@/lib/facades/playlist'
 import { sharedPlaylistFacade } from '@/lib/facades/sharedPlaylist'
-import type { FavoriteSyncProgress } from '@/lib/facades/syncBilibiliPlaylist'
+import type { PlaylistSyncProgress } from '@/lib/facades/syncBilibiliPlaylist'
 import { syncFacade } from '@/lib/facades/syncBilibiliPlaylist'
 import {
 	bilibiliTextPlaylistImportService,
@@ -43,7 +43,7 @@ export const usePlaylistSync = () => {
 			remoteSyncId: number
 			type: Playlist['type']
 			toastId?: string
-			onProgress?: (progress: FavoriteSyncProgress) => void
+			onProgress?: (progress: PlaylistSyncProgress) => void
 			expandMultiPage?: boolean
 		}) => {
 			const result = await syncFacade.sync(
@@ -288,9 +288,19 @@ export const useDeletePlaylist = () => {
 			}
 			return result.value
 		},
-		onSuccess: async () => {
+		onSuccess: (_, { playlistId }) => {
 			toast.success('删除成功')
-			await queryClient.invalidateQueries({
+			// 取消被删歌单的在途查询：删除成功时详情页可能仍处于挂载状态，
+			// 若不处理，重连/重取会在歌单已不存在时再次查询（BBPLAYER-76 / BBPLAYER-AG）
+			void queryClient.cancelQueries({
+				queryKey: playlistKeys.playlistContents(playlistId),
+			})
+			void queryClient.cancelQueries({
+				queryKey: playlistKeys.playlistMetadata(playlistId),
+			})
+			// 注意不要 await：hook 级 onSuccess 会阻塞调用方的 onSuccess（如 router.back()），
+			// 导致详情页迟迟不卸载，放大上面的竞态窗口
+			void queryClient.invalidateQueries({
 				queryKey: playlistKeys.playlistLists(),
 			})
 		},
@@ -562,7 +572,7 @@ export const useSubscribeToSharedPlaylist = () => {
 			await queryClient.invalidateQueries({
 				queryKey: playlistKeys.playlistLists(),
 			})
-			router.push({
+			router.navigate({
 				pathname: '/playlist/local/[id]',
 				params: { id: String(localPlaylistId) },
 			})

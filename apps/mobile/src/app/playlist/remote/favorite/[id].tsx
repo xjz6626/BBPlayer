@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { StyleSheet, View } from 'react-native'
 import { Appbar, useTheme } from 'react-native-paper'
 
-import NowPlayingBar from '@/components/NowPlayingBar'
 import ThemedRefreshControl, {
 	ThemedRefreshListHeader,
 } from '@/components/theme/ThemedRefreshControl'
@@ -17,6 +16,7 @@ import { useRemotePlaylist } from '@/features/playlist/remote/hooks/useRemotePla
 import { useTrackSelection } from '@/features/playlist/remote/hooks/useTrackSelection'
 import { PlaylistPageSkeleton } from '@/features/playlist/skeletons/PlaylistSkeleton'
 import { useInfiniteFavoriteList } from '@/hooks/queries/bilibili/favorite'
+import { useScreenTransitionReady } from '@/hooks/router/useScreenTransitionReady'
 import useAppStore from '@/hooks/stores/useAppStore'
 import { useModalStore } from '@/hooks/stores/useModalStore'
 import { useDoubleTapScrollToTop } from '@/hooks/ui/useDoubleTapScrollToTop'
@@ -52,12 +52,13 @@ const mapApiItemToTrack = (
 			bvid: apiItem.bvid,
 			cid: null,
 			isMultiPage: false,
-			videoIsValid: true,
+			videoIsValid: apiItem.attr === 0,
 		},
 	}
 }
 
 export default function FavoritePage() {
+	const isListReady = useScreenTransitionReady()
 	const { id } = useLocalSearchParams<{ id: string }>()
 	const theme = useTheme()
 	const { colors } = theme
@@ -65,8 +66,7 @@ export default function FavoritePage() {
 	const [refreshing, setRefreshing] = useState(false)
 	const linkedPlaylistId = useCheckLinkedToPlaylist(Number(id), 'favorite')
 
-	const { selected, selectMode, toggle, enterSelectMode, setSelected } =
-		useTrackSelection()
+	const { selected, selectMode, toggle, enterSelectMode } = useTrackSelection()
 	const selection = useMemo(
 		() => ({
 			active: selectMode,
@@ -105,7 +105,6 @@ export default function FavoritePage() {
 	)
 	const {
 		backgroundColor,
-		nowPlayingBarColor,
 		primaryButtonColor,
 		primaryButtonTextColor,
 		secondaryButtonContainerColor,
@@ -131,9 +130,10 @@ export default function FavoritePage() {
 			return
 		}
 		openModal(
-			'FavoriteSyncProgress',
+			'PlaylistSyncProgress',
 			{
-				favoriteId: Number(id),
+				remoteId: Number(id),
+				type: 'favorite',
 				shouldRedirectToLocalPlaylist: true,
 				expandMultiPage: expandMultiPageOnSync,
 			},
@@ -151,8 +151,8 @@ export default function FavoritePage() {
 		return null
 	}
 
-	if (isFavoriteDataPending) {
-		return <PlaylistPageSkeleton />
+	if (isFavoriteDataPending || !isListReady) {
+		return <PlaylistPageSkeleton animate={isListReady} />
 	}
 
 	if (isFavoriteDataError) {
@@ -189,20 +189,6 @@ export default function FavoritePage() {
 				/>
 				{selectMode ? (
 					<>
-						<Appbar.Action
-							icon='select-all'
-							onPress={() => setSelected(new Set(tracks.map((t) => t.id)))}
-						/>
-						<Appbar.Action
-							icon='select-compare'
-							onPress={() =>
-								setSelected(
-									new Set(
-										tracks.filter((t) => !selected.has(t.id)).map((t) => t.id),
-									),
-								)
-							}
-						/>
 						<Appbar.Action
 							icon='playlist-plus'
 							onPress={() => {
@@ -268,9 +254,6 @@ export default function FavoritePage() {
 					isFetchingNextPage={isFetchingNextPage}
 				/>
 			</View>
-			<View style={styles.nowPlayingBarContainer}>
-				<NowPlayingBar backgroundColor={nowPlayingBarColor} />
-			</View>
 		</View>
 	)
 }
@@ -281,11 +264,5 @@ const styles = StyleSheet.create({
 	},
 	listContainer: {
 		flex: 1,
-	},
-	nowPlayingBarContainer: {
-		position: 'absolute',
-		bottom: 0,
-		left: 0,
-		right: 0,
 	},
 })

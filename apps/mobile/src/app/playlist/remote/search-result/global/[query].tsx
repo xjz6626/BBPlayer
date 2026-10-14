@@ -5,7 +5,6 @@ import { StyleSheet, View } from 'react-native'
 import { Appbar, Text, useTheme } from 'react-native-paper'
 
 import ActivityIndicator from '@/components/common/ActivityIndicator'
-import NowPlayingBar from '@/components/NowPlayingBar'
 import ThemedRefreshControl, {
 	ThemedRefreshListHeader,
 } from '@/components/theme/ThemedRefreshControl'
@@ -14,8 +13,12 @@ import { TrackList } from '@/features/playlist/remote/components/RemoteTrackList
 import { useTrackSelection } from '@/features/playlist/remote/hooks/useTrackSelection'
 import { SearchUserHeader } from '@/features/playlist/remote/search-result/components/SearchUserHeader'
 import { useSearchInteractions } from '@/features/playlist/remote/search-result/hooks/useSearchInteractions'
-import { TrackListItemSkeleton } from '@/features/playlist/skeletons/PlaylistSkeleton'
+import {
+	PlaylistTrackListSkeleton,
+	TrackListItemSkeletonGroup,
+} from '@/features/playlist/skeletons/PlaylistSkeleton'
 import { useSearchResults } from '@/hooks/queries/bilibili/search'
+import { useScreenTransitionReady } from '@/hooks/router/useScreenTransitionReady'
 import { useModalStore } from '@/hooks/stores/useModalStore'
 import { useDoubleTapScrollToTop } from '@/hooks/ui/useDoubleTapScrollToTop'
 import { analyticsService } from '@/lib/services/analyticsService'
@@ -52,12 +55,12 @@ const mapApiItemToTrack = (apiItem: BilibiliSearchVideo): BilibiliTrack => {
 }
 
 export default function SearchResultsPage() {
+	const isListReady = useScreenTransitionReady()
 	const { colors } = useTheme()
 	const { query } = useLocalSearchParams<{ query: string }>()
 	const router = useRouter()
 
-	const { selected, selectMode, toggle, enterSelectMode, setSelected } =
-		useTrackSelection()
+	const { selected, selectMode, toggle, enterSelectMode } = useTrackSelection()
 	const selection = useMemo(
 		() => ({
 			active: selectMode,
@@ -109,6 +112,10 @@ export default function SearchResultsPage() {
 		return uniqueTracks.map(mapApiItemToTrack)
 	}, [searchData])
 
+	if (!isListReady) {
+		return <PlaylistTrackListSkeleton animate={isListReady} />
+	}
+
 	if (isErrorSearchData) {
 		return <PlaylistError text='加载失败' />
 	}
@@ -126,24 +133,6 @@ export default function SearchResultsPage() {
 				/>
 				{selectMode ? (
 					<>
-						<Appbar.Action
-							icon='select-all'
-							onPress={() =>
-								setSelected(new Set(uniqueSearchData.map((t) => t.id)))
-							}
-						/>
-						<Appbar.Action
-							icon='select-compare'
-							onPress={() =>
-								setSelected(
-									new Set(
-										uniqueSearchData
-											.filter((t) => !selected.has(t.id))
-											.map((t) => t.id),
-									),
-								)
-							}
-						/>
 						<Appbar.Action
 							icon='playlist-plus'
 							onPress={() => {
@@ -213,9 +202,10 @@ export default function SearchResultsPage() {
 										style={{ marginLeft: 8 }}
 									/>
 								</View>
-								{Array.from({ length: 10 }, (_, index) => (
-									<TrackListItemSkeleton key={index} />
-								))}
+								<TrackListItemSkeletonGroup
+									count={10}
+									animate
+								/>
 							</View>
 						) : (
 							<Text
@@ -229,9 +219,6 @@ export default function SearchResultsPage() {
 						)
 					}
 				/>
-			</View>
-			<View style={styles.nowPlayingBarContainer}>
-				<NowPlayingBar />
 			</View>
 		</View>
 	)
@@ -257,11 +244,5 @@ const styles = StyleSheet.create({
 	},
 	videoSectionTitle: {
 		fontWeight: 'bold',
-	},
-	nowPlayingBarContainer: {
-		position: 'absolute',
-		bottom: 0,
-		left: 0,
-		right: 0,
 	},
 })

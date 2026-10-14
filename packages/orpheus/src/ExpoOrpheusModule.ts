@@ -20,6 +20,14 @@ export enum TransitionReason {
 	PLAYLIST_CHANGED = 3,
 }
 
+/** 进入音频时的起播位置策略。 */
+export enum ResumeStrategy {
+	/** 始终从头开始。 */
+	NONE = 0,
+	/** 播客模式：使用该音频保存的逐首断点续播。 */
+	PODCAST = 1,
+}
+
 export interface Track {
 	id: string
 	url: string
@@ -89,6 +97,11 @@ export type OrpheusEvents = {
 	}): void
 	onHeadlessEvent(event: OrpheusHeadlessEvent): void
 	onPlayerError(event: PlaybackErrorEvent): void
+	onSpectrumVisualizerError(event: {
+		audioSessionId: number
+		message: string
+	}): void
+	onSpectrumVisualizerEnabledChanged(event: { enabled: boolean }): void
 	onPositionUpdate(event: {
 		position: number
 		duration: number
@@ -155,6 +168,14 @@ declare class NativeOrpheusModule extends NativeModule<OrpheusEvents> {
 	loudnessNormalizationEnabled: boolean
 	/** Android 服务恢复状态后是否自动开始播放。 */
 	autoplayOnStartEnabled: boolean
+	/**
+	 * 进入音频时的起播位置策略，取值使用导出的 `ResumeStrategy`。
+	 *
+	 * 原生端持久化该值，冷启动时无需等待 JS 即可生效。
+	 */
+	playbackResumeStrategy: ResumeStrategy
+	/** 是否显示并启用音频频谱分析。 */
+	isSpectrumVisualizerEnabled: boolean
 	/** 原生存储中桌面悬浮歌词窗口当前是否标记为显示。 */
 	isDesktopLyricsShown: boolean
 	/** 桌面悬浮歌词窗口是否锁定为不可拖动。 */
@@ -255,6 +276,12 @@ declare class NativeOrpheusModule extends NativeModule<OrpheusEvents> {
 	 */
 	getQueue(): Promise<Track[]>
 	/**
+	 * 保持当前曲目不变，反转其后的待播放队列。
+	 *
+	 * 随机播放开启时不会改变队列。
+	 */
+	reverseRemainingQueue(): Promise<void>
+	/**
 	 * 将曲目追加到队列末尾。
 	 *
 	 * 同一 `id` 在队列中只保留一项；重复追加时不会创建副本。如果 `startFromId`
@@ -281,6 +308,8 @@ declare class NativeOrpheusModule extends NativeModule<OrpheusEvents> {
 	 * 随机播放开启时，`index` 会被解释为随机播放遍历顺序中的逻辑索引。
 	 */
 	removeTrack(index: number): Promise<void>
+	/** 将队列项从 fromIndex 移到 toIndex；索引与 getQueue() 的顺序一致。 */
+	moveTrack(fromIndex: number, toIndex: number): Promise<void>
 	/**
 	 * 启动或替换睡眠定时器。
 	 *
@@ -317,8 +346,12 @@ declare class NativeOrpheusModule extends NativeModule<OrpheusEvents> {
 	setAllowSimultaneousPlayback(enabled: boolean): Promise<void>
 	/** 移除所有下载任务以及全部本地缓存封面。 */
 	removeAllDownloads(): Promise<void>
+	/** 清空 Media3 在线播放 LRU 缓存。其他缓存由 `@bbplayer/native` 负责清理。 */
+	clearPlaybackCache(): Promise<void>
 	/** 返回 Media3 DownloadManager 当前已知的全部任务。 */
 	getDownloads(): Promise<DownloadTask[]>
+	/** 返回所有已完成的下载任务。 */
+	getCompletedDownloadTasks(): Promise<DownloadTask[]>
 	/**
 	 * 返回指定 id 对应的下载状态。
 	 *
@@ -432,7 +465,7 @@ declare class NativeOrpheusModule extends NativeModule<OrpheusEvents> {
 	/**
 	 * 导出所有 Orpheus 原生配置数据。
 	 *
-	 * 返回包含 `playerQueue`（播放器队列 store 的 10 个配置键）和
+	 * 返回包含 `playerQueue`（播放器队列 store 的配置键）和
 	 * `loudness`（所有已计算响度数据）的对象。
 	 */
 	exportData(): {

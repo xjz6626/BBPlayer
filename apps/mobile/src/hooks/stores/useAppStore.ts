@@ -13,10 +13,37 @@ import type { AppState, Settings } from '@/types/core/appStore'
 import type { StorageKey } from '@/types/storage'
 import log from '@/utils/log'
 import { storage, zustandStorage } from '@/utils/mmkv'
+import { migrateStartupScreen } from '@/utils/startup-screen'
 
 const logger = log.extend('Store.App')
 
 import toast from '@/utils/toast'
+
+/**
+ * 旧版本的播放器背景默认是普通渐变（以及 md3 / streamer 等历史值）。
+ * 升级时统一迁移到流体效果，并提示用户可以切回。
+ *
+ * 仅当存量值明确存在且不是 fluid 时才迁移，避免给从未设置过该字段的用户误报。
+ */
+function migratePlayerBackgroundToFluid(
+	settings: Partial<Settings> | undefined,
+): { settings: Partial<Settings> | undefined; migrated: boolean } {
+	if (
+		typeof settings?.playerBackgroundStyle !== 'string' ||
+		settings.playerBackgroundStyle === 'fluid'
+	) {
+		return { settings, migrated: false }
+	}
+
+	toast.info('已自动切换播放器背景到流体效果', {
+		description: '如果不喜欢，可在「设置 → 外观与主题」中切换回普通渐变',
+	})
+
+	return {
+		settings: { ...settings, playerBackgroundStyle: 'fluid' },
+		migrated: true,
+	}
+}
 
 export const parseCookieToObject = (
 	cookie?: string,
@@ -100,6 +127,7 @@ export const useAppStore = create<AppState>()(
 				bilibiliCookie: null,
 				bbplayerToken: null,
 				settings: {
+					defaultPlayerMode: 'music',
 					sendPlayHistory: false,
 					enableDebugLog: false,
 					enableOldSchoolStyleLyric: false,
@@ -110,12 +138,11 @@ export const useAppStore = create<AppState>()(
 					lyricSource: 'netease',
 					enableVerbatimLyrics: true,
 					enableDataCollection: true,
-					enableDanmaku: false,
-					danmakuFilterLevel: 0,
 					downloadMaxParallelTasks: 1,
 					enableMinimalistMode: false,
 					allowSimultaneousPlayback: false,
 					expandMultiPageOnSync: null,
+					hideStarPrompt: false,
 				},
 				bilibiliUserInfo: null,
 				bbplayerAccount: null,
@@ -243,7 +270,7 @@ export const useAppStore = create<AppState>()(
 		{
 			name: 'app-storage',
 			storage: createJSONStorage(() => zustandStorage),
-			version: 2,
+			version: 6,
 
 			partialize: (state) => ({
 				bilibiliCookie: state.bilibiliCookie,
@@ -254,15 +281,59 @@ export const useAppStore = create<AppState>()(
 			}),
 
 			migrate: (persistedState, version) => {
-				const state = persistedState as Partial<AppState>
+				const state = persistedState as Partial<Omit<AppState, 'settings'>> & {
+					settings?: Partial<Settings> & {
+						enableSpectrumVisualizer?: boolean
+						startupScreen?: unknown
+					}
+				}
+				let migratedState = state
+
 				if (version < 2) {
-					return {
-						...state,
+					migratedState = {
+						...migratedState,
 						bbplayerToken: null,
 						bbplayerAccount: null,
 					}
 				}
-				return persistedState
+				if (version < 3) {
+					migratedState = {
+						...migratedState,
+						settings: {
+							...migratedState.settings,
+							enableSpectrumVisualizer:
+								migratedState.settings?.enableSpectrumVisualizer ?? false,
+						},
+					}
+				}
+				if (version < 4) {
+					const legacySettings = migratedState.settings
+					Orpheus.isSpectrumVisualizerEnabled =
+						legacySettings?.enableSpectrumVisualizer ?? false
+
+					if (legacySettings) {
+						const settings = { ...legacySettings }
+						delete settings.enableSpectrumVisualizer
+						migratedState = { ...migratedState, settings }
+					}
+				}
+
+				if (version < 5) {
+					migrateStartupScreen(migratedState.settings?.startupScreen)
+					const settings = { ...migratedState.settings }
+					delete settings.startupScreen
+					migratedState = { ...migratedState, settings }
+				}
+
+				if (version < 6) {
+					// 旧版本默认使用普通渐变；升级后自动迁移到流体效果并提示用户。
+					const { settings } = migratePlayerBackgroundToFluid(
+						migratedState.settings,
+					)
+					migratedState = { ...migratedState, settings }
+				}
+
+				return migratedState
 			},
 
 			merge: (persistedState, currentState) => {
@@ -363,6 +434,13 @@ export const useAppStore = create<AppState>()(
 						'boolean',
 					)
 					checkAndSet(OLD_KEYS.BG_STYLE, 'playerBackgroundStyle', 'string')
+
+					const { migrated: bgStyleMigrated } =
+						migratePlayerBackgroundToFluid(migratedSettings)
+					if (bgStyleMigrated) {
+						migratedSettings.playerBackgroundStyle = 'fluid'
+						hasOldSettings = true
+					}
 				} catch (e) {
 					logger.error('迁移设置项失败', e)
 				}

@@ -1,4 +1,4 @@
-import { Orpheus, type Track as OrpheusTrack } from '@bbplayer/orpheus'
+import { type Track as OrpheusTrack } from '@bbplayer/orpheus'
 import type { Result } from 'neverthrow'
 import { err, ok } from 'neverthrow'
 
@@ -10,6 +10,7 @@ import { queryClient } from '@/lib/config/queryClient'
 import type { PlayerError } from '@/lib/errors/player'
 import { createPlayerError } from '@/lib/errors/player'
 import type { BilibiliApiError } from '@/lib/errors/thirdparty/bilibili'
+import { enqueueTracks, startPlayback } from '@/lib/player/playbackSession'
 import { trackService } from '@/lib/services/trackService'
 import type { Track } from '@/types/core/media'
 
@@ -61,7 +62,7 @@ function convertToOrpheusTrack(
 
 /**
  * 上报播放记录
- * 由于这只是一个非常边缘的功能，我们不关心他是否出错，所以发生报错时只写个 log，返回 void
+ * 由于这只是一个非常边缘的功能，我们不关心它是否出错，所以失败时只写 log，不打扰用户
  */
 async function reportPlaybackHistory(
 	uniqueKey: string,
@@ -71,7 +72,10 @@ async function reportPlaybackHistory(
 	if (!useAppStore.getState().hasBilibiliCookie()) return
 	const trackResult = await trackService.getTrackByUniqueKey(uniqueKey)
 	if (trackResult.isErr()) {
-		toastAndLogError('查询 track 失败：', trackResult.error, 'Utils.Player')
+		logger.debug('查询 track 失败，跳过播放历史上报', {
+			uniqueKey,
+			error: flatErrorMessage(trackResult.error),
+		})
 		return
 	}
 	const track = trackResult.value
@@ -84,11 +88,11 @@ async function reportPlaybackHistory(
 			bvid: track.bilibiliMetadata.bvid,
 		})
 		if (videoPageResult.isErr()) {
-			toastAndLogError(
-				'查询视频信息失败：',
-				videoPageResult.error,
-				'Utils.Player',
-			)
+			logger.debug('查询视频信息失败，跳过播放历史上报', {
+				uniqueKey,
+				bvid: track.bilibiliMetadata.bvid,
+				error: flatErrorMessage(videoPageResult.error),
+			})
 			return
 		}
 		if (videoPageResult.value.length === 0) {
@@ -140,65 +144,33 @@ async function addToQueue({
 	clearQueue,
 	startFromKey,
 	playNext,
+	playlistId,
 }: {
 	tracks: Track[]
 	playNow: boolean
 	clearQueue: boolean
 	startFromKey?: string
 	playNext: boolean
-}) {
-	if (!tracks || tracks.length === 0) {
-		return
-	}
-	if (playNext && tracks.length > 1) {
-		toastAndLogError(
-			'AddToQueueError',
-			'只能将单曲插入到下一首播放，已取消本次操作。',
-			'Utils.Player',
-		)
-		return
-	}
-	logger.debug('添加曲目到播放队列', {
-		trackCount: tracks.length,
-		playNow,
-		clearQueue,
-		startFromKey,
-		playNext,
-	})
-
+	playlistId?: number
+}): Promise<boolean> {
 	try {
 		const orpheusTracks: OrpheusTrack[] = []
 		for (const track of tracks) {
 			const result = convertToOrpheusTrack(track)
-			if (result.isOk()) {
-				orpheusTracks.push(result.value)
-			} else {
-				logger.error('转换为 OrpheusTrack 失败，跳过该曲目', {
-					trackId: track.id,
-					error: result.error,
-				})
-			}
+			if (result.isOk()) orpheusTracks.push(result.value)
 		}
-		if (orpheusTracks.length === 0) {
-			return
-		}
-		if (playNext) {
-			// 前面已经做过长度检查，这里直接取第一个
-			await Orpheus.playNext(orpheusTracks[0])
-			if (playNow) {
-				await Orpheus.play()
-				return
-			}
-			return
-		}
-		await Orpheus.addToEnd(orpheusTracks, startFromKey, clearQueue)
-		// 原生层已经处理了 startFromKey 的播放逻辑，会在添加后直接播放，这里只需要处理 playNow 即可
-		if (playNow && !startFromKey) {
-			await Orpheus.play()
-			return
-		}
-	} catch (e) {
-		logger.error('添加到队列失败：', { error: e })
+		const submit = clearQueue ? startPlayback : enqueueTracks
+		await submit({
+			tracks: orpheusTracks,
+			playNow,
+			startFromKey,
+			playNext,
+			playlistId,
+		})
+		return true
+	} catch (error) {
+		toastAndLogError('添加到播放队列失败', error, 'Utils.Player')
+		return false
 	}
 }
 
@@ -261,7 +233,7 @@ async function finalizeAndRecordCurrentTrack(
 			queryKey: playHistoryKeys.all,
 		})
 
-		void reportPlaybackHistory(uniqueKey, effectivePlayed).catch((error) =>
+		await reportPlaybackHistory(uniqueKey, effectivePlayed).catch((error) =>
 			logger.error('上报播放历史失败', error),
 		)
 	} catch (error) {

@@ -8,7 +8,12 @@
 		},
 		"argent": {
 			"type": "local",
-			"command": ["argent", "mcp"],
+			"command": ["node", "node_modules/@swmansion/argent/dist/cli.js", "mcp"],
+			"enabled": true
+		},
+		"codedb": {
+			"type": "local",
+			"command": ["/Users/roitium/bin/codedb", "mcp"],
 			"enabled": true
 		}
 	},

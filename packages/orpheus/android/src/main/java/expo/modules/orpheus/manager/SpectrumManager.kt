@@ -4,7 +4,9 @@ import android.media.audiofx.Visualizer
 import android.util.Log
 import kotlin.math.hypot
 
-class SpectrumManager {
+class SpectrumManager(
+    private val onInitializationError: (audioSessionId: Int, error: Exception) -> Unit = { _, _ -> }
+) {
     private var visualizer: Visualizer? = null
     private var isEnabled = false
     private var audioSessionId: Int? = null
@@ -20,8 +22,11 @@ class SpectrumManager {
             stop()
         }
 
+        var newVisualizer: Visualizer? = null
         try {
-            visualizer = Visualizer(audioSessionId).apply {
+            val initializedVisualizer = Visualizer(audioSessionId)
+            newVisualizer = initializedVisualizer
+            initializedVisualizer.apply {
                 captureSize = fftSize
                 setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
                     override fun onWaveFormDataCapture(
@@ -42,11 +47,14 @@ class SpectrumManager {
                 }, Visualizer.getMaxCaptureRate() / 2, false, true)
                 enabled = true
             }
+            visualizer = initializedVisualizer
             isEnabled = true
             this.audioSessionId = audioSessionId
         } catch (e: Exception) {
-            Log.e("Orpheus", "Failed to initialize Visualizer: ${e.message}")
-            stop()
+            runCatching { newVisualizer?.release() }
+            Log.w("Orpheus", "Spectrum visualizer is unavailable", e)
+            isEnabled = false
+            runCatching { onInitializationError(audioSessionId, e) }
         }
     }
 
@@ -74,7 +82,10 @@ class SpectrumManager {
         }
 
         try {
-            visualizer?.getFft(fftBytes)
+            if (visualizer?.getFft(fftBytes) != Visualizer.SUCCESS) {
+                destination.fill(0f)
+                return
+            }
 
             val n = fftBytes.size
             val outputSize = minOf(destination.size, n / 2)

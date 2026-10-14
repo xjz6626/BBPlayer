@@ -15,7 +15,6 @@ import {
 
 import Button from '@/components/common/Button'
 import CoverWithPlaceHolder from '@/components/common/CoverWithPlaceHolder'
-import NowPlayingBar from '@/components/NowPlayingBar'
 import ThemedRefreshControl, {
 	ThemedRefreshIndicator,
 } from '@/components/theme/ThemedRefreshControl'
@@ -26,6 +25,7 @@ import { PlaylistPageSkeleton } from '@/features/playlist/skeletons/PlaylistSkel
 import { useSubscribeToSharedPlaylist } from '@/hooks/mutations/db/playlist'
 import { usePlaylistByShareId } from '@/hooks/queries/db/playlist'
 import { useSharedPlaylistPreview } from '@/hooks/queries/sharedPlaylistPreview'
+import { useScreenTransitionReady } from '@/hooks/router/useScreenTransitionReady'
 import { useDoubleTapScrollToTop } from '@/hooks/ui/useDoubleTapScrollToTop'
 import { usePlaylistBackgroundColor } from '@/hooks/ui/usePlaylistBackgroundColor'
 import { bv2av } from '@/lib/api/bilibili/utils'
@@ -80,6 +80,7 @@ const mapPreviewTrackToBilibiliTrack = (
 const trackMenuItems = () => []
 
 export default function SharedPlaylistPreviewPage() {
+	const isListReady = useScreenTransitionReady()
 	const { shareId, inviteCode } = useLocalSearchParams<{
 		shareId?: string
 		inviteCode?: string
@@ -142,7 +143,6 @@ export default function SharedPlaylistPreviewPage() {
 	)
 	const {
 		backgroundColor,
-		nowPlayingBarColor,
 		primaryButtonColor,
 		primaryButtonTextColor,
 		secondaryButtonIconColor,
@@ -172,8 +172,8 @@ export default function SharedPlaylistPreviewPage() {
 
 	if (!parsedShareId) return null
 
-	if (isPending) {
-		return <PlaylistPageSkeleton />
+	if (isPending || !isListReady) {
+		return <PlaylistPageSkeleton animate={isListReady} />
 	}
 
 	if (isError || !data) {
@@ -360,9 +360,6 @@ export default function SharedPlaylistPreviewPage() {
 					}
 				/>
 			</View>
-			<View style={styles.nowPlayingBarContainer}>
-				<NowPlayingBar backgroundColor={nowPlayingBarColor} />
-			</View>
 		</View>
 	)
 }
@@ -373,12 +370,6 @@ const styles = StyleSheet.create({
 	},
 	listContainer: {
 		flex: 1,
-	},
-	nowPlayingBarContainer: {
-		position: 'absolute',
-		bottom: 0,
-		left: 0,
-		right: 0,
 	},
 	previewHint: {
 		marginHorizontal: 16,
@@ -403,6 +394,8 @@ const styles = StyleSheet.create({
 	},
 	actionsContainer: {
 		flexDirection: 'row',
+		flexWrap: 'wrap',
+		gap: 8,
 		alignItems: 'center',
 		justifyContent: 'flex-start',
 		marginHorizontal: 16,

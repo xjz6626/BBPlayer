@@ -1,19 +1,20 @@
 import Icon from '@react-native-vector-icons/material-design-icons'
 import { useObserve } from 'expo-observe'
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
+import { useLocalSearchParams } from 'expo-router'
 import { useEffect, useState, useTransition } from 'react'
 import { StyleSheet, View } from 'react-native'
 import { Text, useTheme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { SceneMap, TabBar, TabView } from 'react-native-tab-view'
 
-import IconButton from '@/components/common/IconButton'
 import SkinAppbarBackground from '@/components/navigation/SkinAppbarBackground'
-import NowPlayingBar from '@/components/NowPlayingBar'
 import CollectionListComponent from '@/features/library/collection/CollectionList'
 import FavoriteFolderListComponent from '@/features/library/favorite/FavoriteFolderList'
 import LocalPlaylistListComponent from '@/features/library/local/LocalPlaylistList'
 import MultiPageVideosListComponent from '@/features/library/multipage/MultiPageVideosList'
+import useSkinForegroundColor from '@/hooks/theme/useSkinForegroundColor'
+import { useNowPlayingBar } from '@/hooks/ui/useNowPlayingBar'
+import { markPerfInteractive } from '@/lib/performance'
 
 const renderScene = SceneMap({
 	local: LocalPlaylistListComponent,
@@ -37,26 +38,30 @@ export enum Tabs {
 }
 
 export default function Library() {
+	useNowPlayingBar()
 	const [index, setIndex] = useState(Tabs.Local)
 	const [_, startTransition] = useTransition()
 	const insets = useSafeAreaInsets()
 	const colors = useTheme().colors
-	const router = useRouter()
+	const headerForegroundColor = useSkinForegroundColor()
 	const { tab } = useLocalSearchParams<{ tab: string }>()
 	const { markInteractive } = useObserve()
 
 	useEffect(() => {
 		markInteractive()
+		void markPerfInteractive()
 	}, [markInteractive])
 
-	useFocusEffect(() => {
+	// 仅在路由参数变化时定位分页，返回音乐库时保留用户当前选择。
+	useEffect(() => {
 		if (tab === undefined) return
 		const numTab = Number(tab)
-		if (isNaN(numTab)) return
+		if (!Number.isInteger(numTab) || numTab < 0 || numTab >= routes.length)
+			return
 		startTransition(() => {
 			setIndex(numTab)
 		})
-	})
+	}, [tab, startTransition])
 
 	return (
 		<View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -71,20 +76,10 @@ export default function Library() {
 				<View style={[styles.header]}>
 					<Text
 						variant='headlineSmall'
-						style={styles.title}
+						style={[styles.title, { color: headerForegroundColor }]}
 					>
 						音乐库
 					</Text>
-					<View style={styles.headerIcons}>
-						<IconButton
-							icon='download-box'
-							onPress={() => router.push('/downloaded')}
-						/>
-						<IconButton
-							icon='trophy'
-							onPress={() => router.push('/history/overall')}
-						/>
-					</View>
 				</View>
 				<TabView
 					style={[styles.tabView, { backgroundColor: 'transparent' }]}
@@ -150,9 +145,6 @@ export default function Library() {
 					}}
 				/>
 			</View>
-			<View style={styles.nowPlayingBarContainer}>
-				<NowPlayingBar />
-			</View>
 		</View>
 	)
 }
@@ -170,16 +162,7 @@ const styles = StyleSheet.create({
 	title: {
 		fontWeight: 'bold',
 	},
-	headerIcons: {
-		flexDirection: 'row',
-	},
 	tabView: {
 		flex: 1,
-	},
-	nowPlayingBarContainer: {
-		position: 'absolute',
-		bottom: 0,
-		left: 0,
-		right: 0,
 	},
 })

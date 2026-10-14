@@ -1,6 +1,6 @@
 import { useImage } from 'expo-image'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { StyleSheet, View } from 'react-native'
 import { Appbar, Text, useTheme } from 'react-native-paper'
 import { Searchbar as SearchBar } from 'react-native-paper'
@@ -11,7 +11,6 @@ import Animated, {
 } from 'react-native-reanimated'
 
 import Button from '@/components/common/Button'
-import NowPlayingBar from '@/components/NowPlayingBar'
 import ThemedRefreshControl, {
 	ThemedRefreshListHeader,
 } from '@/components/theme/ThemedRefreshControl'
@@ -22,11 +21,15 @@ import { usePlaylistMenu } from '@/features/playlist/remote/hooks/usePlaylistMen
 import { useRemotePlaylist } from '@/features/playlist/remote/hooks/useRemotePlaylist'
 import { useTrackSelection } from '@/features/playlist/remote/hooks/useTrackSelection'
 import { PlaylistPageSkeleton } from '@/features/playlist/skeletons/PlaylistSkeleton'
+import { useSetUserFollowing } from '@/hooks/mutations/bilibili/relations'
+import { useUserRelation } from '@/hooks/queries/bilibili/relations'
 import {
 	useInfiniteGetUserUploadedVideos,
 	useOtherUserInfo,
+	usePersonalInformation,
 } from '@/hooks/queries/bilibili/user'
 import usePreventRemove from '@/hooks/router/usePreventRemove'
+import { useScreenTransitionReady } from '@/hooks/router/useScreenTransitionReady'
 import useAppStore from '@/hooks/stores/useAppStore'
 import { useModalStore } from '@/hooks/stores/useModalStore'
 import { useDoubleTapScrollToTop } from '@/hooks/ui/useDoubleTapScrollToTop'
@@ -75,21 +78,41 @@ const mapApiItemToTrack = (
 }
 
 export default function UploaderPage() {
+	const isListReady = useScreenTransitionReady()
 	const { mid } = useLocalSearchParams<{ mid: string }>()
 	const theme = useTheme()
 	const { colors } = theme
 	const router = useRouter()
 	const [refreshing, setRefreshing] = useState(false)
 	const enable = useAppStore((state) => state.hasBilibiliCookie())
+	const accountMid = useAppStore((state) => state.bilibiliCookie?.DedeUserID)
+	const { data: personalInfo } = usePersonalInformation()
+	const isSelf = Number(accountMid ?? personalInfo?.mid) === Number(mid)
+	const relation = useUserRelation(Number(mid))
+	const setFollowing = useSetUserFollowing(Number(mid))
+	const followingBusy = useRef(false)
+	const isFollowing =
+		relation.data?.attribute === 2 || relation.data?.attribute === 6
+	const isBlocked = relation.data?.attribute === 128
+	const handleFollowing = async () => {
+		if (followingBusy.current) return
+		if (relation.isError) {
+			void relation.refetch()
+			return
+		}
+		if (!relation.data || isSelf || isBlocked) return
+		followingBusy.current = true
+		try {
+			await setFollowing.mutateAsync(!isFollowing)
+		} catch {
+			// The mutation reports the error without changing the displayed relationship.
+		} finally {
+			followingBusy.current = false
+		}
+	}
 
-	const {
-		selected,
-		selectMode,
-		toggle,
-		enterSelectMode,
-		exitSelectMode,
-		setSelected,
-	} = useTrackSelection()
+	const { selected, selectMode, toggle, enterSelectMode, exitSelectMode } =
+		useTrackSelection()
 
 	const selection = useMemo(
 		() => ({
@@ -149,7 +172,6 @@ export default function UploaderPage() {
 	)
 	const {
 		backgroundColor,
-		nowPlayingBarColor,
 		primaryButtonColor,
 		primaryButtonTextColor,
 		secondaryButtonContainerColor,
@@ -192,7 +214,7 @@ export default function UploaderPage() {
 				<Button
 					mode='contained'
 					onPress={() => {
-						router.push('/settings/bilibili-account/qrcode-login')
+						router.navigate('/settings/bilibili-account/qrcode-login')
 					}}
 				>
 					登录
@@ -201,12 +223,12 @@ export default function UploaderPage() {
 		)
 	}
 
-	if (isUserInfoPending) {
-		return <PlaylistPageSkeleton />
+	if (isUserInfoPending || !isListReady) {
+		return <PlaylistPageSkeleton animate={isListReady} />
 	}
 
 	if (isUploadedVideosPending && !startSearch) {
-		return <PlaylistPageSkeleton />
+		return <PlaylistPageSkeleton animate={isListReady} />
 	}
 
 	if (isUploadedVideosError || isUserInfoError) {
@@ -230,20 +252,6 @@ export default function UploaderPage() {
 				<Appbar.BackAction onPress={() => router.back()} />
 				{selectMode ? (
 					<>
-						<Appbar.Action
-							icon='select-all'
-							onPress={() => setSelected(new Set(tracks.map((t) => t.id)))}
-						/>
-						<Appbar.Action
-							icon='select-compare'
-							onPress={() =>
-								setSelected(
-									new Set(
-										tracks.filter((t) => !selected.has(t.id)).map((t) => t.id),
-									),
-								)
-							}
-						/>
 						<Appbar.Action
 							icon='playlist-plus'
 							onPress={() => {
@@ -296,8 +304,27 @@ export default function UploaderPage() {
 								title={uploaderUserInfo.name}
 								subtitles={`${uploadedVideos?.pages[0].page.count ?? 0}\u2009首歌曲`}
 								description={uploaderUserInfo.sign}
-								onClickMainButton={undefined}
-								mainButtonIcon={'sync'}
+								onClickMainButton={isSelf ? undefined : handleFollowing}
+								mainButtonIcon={isFollowing ? 'account-check' : 'account-plus'}
+								mainButtonText={
+									setFollowing.isPending
+										? '处理中'
+										: relation.isError
+											? '关注状态加载失败，重试'
+											: isBlocked
+												? '已拉黑'
+												: relation.isPending
+													? '加载关注状态'
+													: isFollowing
+														? '取消关注'
+														: '关注 UP 主'
+								}
+								mainButtonLoading={
+									setFollowing.isPending || relation.isFetching
+								}
+								disableMainButton={
+									setFollowing.isPending || relation.isFetching || isBlocked
+								}
 								id={Number(mid)}
 								primaryButtonColor={primaryButtonColor}
 								primaryButtonTextColor={primaryButtonTextColor}
@@ -311,7 +338,7 @@ export default function UploaderPage() {
 							refreshing={refreshing}
 							onRefresh={async () => {
 								setRefreshing(true)
-								await refetch()
+								await Promise.all([refetch(), relation.refetch()])
 								setRefreshing(false)
 							}}
 							colors={[colors.primary]}
@@ -321,9 +348,6 @@ export default function UploaderPage() {
 					onEndReached={hasNextPage ? () => fetchNextPage() : undefined}
 					hasNextPage={hasNextPage}
 				/>
-			</View>
-			<View style={styles.nowPlayingBarContainer}>
-				<NowPlayingBar backgroundColor={nowPlayingBarColor} />
 			</View>
 		</View>
 	)
@@ -348,11 +372,5 @@ const styles = StyleSheet.create({
 	},
 	listContainer: {
 		flex: 1,
-	},
-	nowPlayingBarContainer: {
-		position: 'absolute',
-		bottom: 0,
-		left: 0,
-		right: 0,
 	},
 })

@@ -5,10 +5,13 @@ import { ScrollView, StyleSheet, View } from 'react-native'
 import { Appbar, Text, useTheme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
+import { MenuView } from '@/components/common/FunctionalMenu'
+import IconButton from '@/components/common/IconButton'
+import SettingsSectionTitle from '@/components/common/SettingsSectionTitle'
 import UniversalSwitch from '@/components/common/UniversalSwitch'
-import NowPlayingBar from '@/components/NowPlayingBar'
 import useCurrentTrack from '@/hooks/player/useCurrentTrack'
 import useAppStore from '@/hooks/stores/useAppStore'
+import { useMenuActions } from '@/hooks/ui/useMenuActions'
 import { toastAndLogError } from '@/utils/error-handling'
 
 export default function PlaybackSettingsPage() {
@@ -20,6 +23,9 @@ export default function PlaybackSettingsPage() {
 	const allowSimultaneousPlayback = useAppStore(
 		(state) => state.settings.allowSimultaneousPlayback,
 	)
+	const defaultPlayerMode = useAppStore(
+		(state) => state.settings.defaultPlayerMode,
+	)
 	const setSettings = useAppStore((state) => state.setSettings)
 
 	const [enablePersistCurrentPosition, setEnablePersistCurrentPosition] =
@@ -29,6 +35,23 @@ export default function PlaybackSettingsPage() {
 	const [enableAutostartPlayOnStart, setEnableAutostartPlayOnStart] = useState(
 		Orpheus.autoplayOnStartEnabled,
 	)
+
+	const setDefaultPlayerMode = (mode: 'music' | 'podcast') => {
+		setSettings({ defaultPlayerMode: mode })
+	}
+
+	const menuActions = useMenuActions([
+		{
+			title: '音乐',
+			state: defaultPlayerMode === 'music' ? 'on' : 'off',
+			onPress: () => setDefaultPlayerMode('music'),
+		},
+		{
+			title: '播客',
+			state: defaultPlayerMode === 'podcast' ? 'on' : 'off',
+			onPress: () => setDefaultPlayerMode('podcast'),
+		},
+	])
 
 	return (
 		<View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -43,21 +66,23 @@ export default function PlaybackSettingsPage() {
 					{ paddingBottom: insets.bottom + (haveTrack ? 70 + 20 : 20) },
 				]}
 			>
+				<SettingsSectionTitle
+					title='播放行为'
+					first
+				/>
 				<View style={styles.settingRow}>
-					<Text>在应用启动时恢复上次播放进度</Text>
-					<UniversalSwitch
-						value={enablePersistCurrentPosition}
-						onValueChange={() => {
-							try {
-								Orpheus.restorePlaybackPositionEnabled =
-									!enablePersistCurrentPosition
-							} catch (e) {
-								toastAndLogError('设置失败', e, 'Settings')
-								return
-							}
-							setEnablePersistCurrentPosition(!enablePersistCurrentPosition)
-						}}
-					/>
+					<View style={{ flexShrink: 1 }}>
+						<Text>默认播放器</Text>
+						<Text variant='bodySmall'>
+							仅影响之后开始的播放，歌单可单独设置偏好。
+						</Text>
+					</View>
+					<MenuView {...menuActions}>
+						<IconButton
+							icon='chevron-down'
+							size={20}
+						/>
+					</MenuView>
 				</View>
 				<View style={styles.settingRow}>
 					<Text>响度均衡（实验性）</Text>
@@ -76,6 +101,33 @@ export default function PlaybackSettingsPage() {
 					/>
 				</View>
 				<View style={styles.settingRow}>
+					<Text>允许与其他软件同时播放</Text>
+					<UniversalSwitch
+						value={allowSimultaneousPlayback}
+						onValueChange={(value) => {
+							setSettings({ allowSimultaneousPlayback: value })
+						}}
+					/>
+				</View>
+
+				<SettingsSectionTitle title='启动时行为' />
+				<View style={styles.settingRow}>
+					<Text>在应用启动时恢复上次播放进度</Text>
+					<UniversalSwitch
+						value={enablePersistCurrentPosition}
+						onValueChange={() => {
+							try {
+								Orpheus.restorePlaybackPositionEnabled =
+									!enablePersistCurrentPosition
+							} catch (e) {
+								toastAndLogError('设置失败', e, 'Settings')
+								return
+							}
+							setEnablePersistCurrentPosition(!enablePersistCurrentPosition)
+						}}
+					/>
+				</View>
+				<View style={styles.settingRow}>
 					<Text>软件启动时自动播放（易社死）</Text>
 					<UniversalSwitch
 						value={enableAutostartPlayOnStart}
@@ -90,19 +142,7 @@ export default function PlaybackSettingsPage() {
 						}}
 					/>
 				</View>
-				<View style={styles.settingRow}>
-					<Text>允许与其他软件同时播放</Text>
-					<UniversalSwitch
-						value={allowSimultaneousPlayback}
-						onValueChange={(value) => {
-							setSettings({ allowSimultaneousPlayback: value })
-						}}
-					/>
-				</View>
 			</ScrollView>
-			<View style={styles.nowPlayingBarContainer}>
-				<NowPlayingBar />
-			</View>
 		</View>
 	)
 }
@@ -122,11 +162,5 @@ const styles = StyleSheet.create({
 		alignItems: 'center',
 		justifyContent: 'space-between',
 		marginTop: 16,
-	},
-	nowPlayingBarContainer: {
-		position: 'absolute',
-		bottom: 0,
-		left: 0,
-		right: 0,
 	},
 })

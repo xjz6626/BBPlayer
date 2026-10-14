@@ -5,7 +5,9 @@ import JSZip from 'jszip'
 import { expoDb } from '@/lib/db/db'
 import log from '@/utils/log'
 import { storage } from '@/utils/mmkv'
+import { getStartupScreen } from '@/utils/startup-screen'
 
+import { BACKUP_VERSION } from './types'
 import type { BackupManifest } from './types'
 
 const logger = log.extend('backup.export')
@@ -30,10 +32,13 @@ export async function createBackup(): Promise<string> {
 		const dbBase64 = dbBackupFile.base64Sync()
 
 		const manifest: BackupManifest = {
-			version: 1,
+			version: BACKUP_VERSION,
 			exportedAt: new Date().toISOString(),
 			mmkv: {
+				startup_screen: getStartupScreen(),
 				'app-storage': storage.getString('app-storage') ?? '',
+				'playback-context-store':
+					storage.getString('playback-context-store') ?? '',
 				'shared-playlist-members':
 					storage.getString('shared-playlist-members') ?? '',
 			},

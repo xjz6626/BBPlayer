@@ -1,5 +1,6 @@
 export interface AppStorageSchema {
 	first_open: boolean
+	startup_screen: 'home' | 'library'
 	ignore_alert_replace_playlist: boolean
 	skip_version: string
 	enable_sentry_report: boolean
@@ -14,6 +15,7 @@ export interface AppStorageSchema {
 	now_playing_bar_style: 'float' | 'bottom'
 	enable_persist_current_position: boolean
 	'app-storage': string
+	'playback-context-store': string
 	current_position: number
 	enable_loudness_normalization: boolean
 	db_schema_version: number
@@ -28,6 +30,11 @@ export interface AppStorageSchema {
 	'skin-storage': string
 	boot_splash_preload: string
 	'weekly-vocal-rank-cache': string
+	enable_startup_profiling: boolean
+	enable_shake_profiling: boolean
+	webdav_backup_url: string
+	webdav_backup_username: string
+	webdav_backup_directory: string
 }
 
 export type StorageKey = keyof AppStorageSchema

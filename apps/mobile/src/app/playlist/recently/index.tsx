@@ -3,7 +3,6 @@ import { useCallback, useMemo } from 'react'
 import { StyleSheet, View } from 'react-native'
 import { Appbar, Text, useTheme } from 'react-native-paper'
 
-import NowPlayingBar from '@/components/NowPlayingBar'
 import { PlaylistError } from '@/features/playlist/local/components/PlaylistError'
 import { PlaylistHeader } from '@/features/playlist/remote/components/PlaylistHeader'
 import { TrackList } from '@/features/playlist/remote/components/RemoteTrackList'
@@ -11,19 +10,20 @@ import { usePlaylistMenu } from '@/features/playlist/remote/hooks/usePlaylistMen
 import { useTrackSelection } from '@/features/playlist/remote/hooks/useTrackSelection'
 import { PlaylistPageSkeleton } from '@/features/playlist/skeletons/PlaylistSkeleton'
 import { useMostPlayedTracks } from '@/hooks/queries/playHistory'
+import { useScreenTransitionReady } from '@/hooks/router/useScreenTransitionReady'
 import { usePlaylistBackgroundColor } from '@/hooks/ui/usePlaylistBackgroundColor'
 import type { BilibiliTrack, Track } from '@/types/core/media'
 import { addToQueue } from '@/utils/player'
 import toast from '@/utils/toast'
 
 export default function RecentlyPlayedPage() {
+	const isListReady = useScreenTransitionReady()
 	const router = useRouter()
 	const theme = useTheme()
 	const { colors } = theme
 
 	const {
 		backgroundColor,
-		nowPlayingBarColor,
 		primaryButtonColor,
 		primaryButtonTextColor,
 		secondaryButtonContainerColor,
@@ -90,8 +90,8 @@ export default function RecentlyPlayedPage() {
 		return tracks as BilibiliTrack[]
 	}, [tracks])
 
-	if (isPending) {
-		return <PlaylistPageSkeleton />
+	if (isPending || !isListReady) {
+		return <PlaylistPageSkeleton animate={isListReady} />
 	}
 
 	if (isError) {
@@ -139,10 +139,6 @@ export default function RecentlyPlayedPage() {
 					/>
 				)}
 			</View>
-
-			<View style={styles.nowPlayingBarContainer}>
-				<NowPlayingBar backgroundColor={nowPlayingBarColor} />
-			</View>
 		</View>
 	)
 }
@@ -159,11 +155,5 @@ const styles = StyleSheet.create({
 		alignItems: 'center',
 		justifyContent: 'center',
 		padding: 16,
-	},
-	nowPlayingBarContainer: {
-		position: 'absolute',
-		bottom: 0,
-		left: 0,
-		right: 0,
 	},
 })

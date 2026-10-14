@@ -17,13 +17,13 @@ type PlayerAction =
 	| 'skip_prev'
 	| 'shuffle'
 	| 'repeat'
-type PlayerQueueAction = 'open_queue' | 'play_item'
+type PlayerQueueAction = 'open_queue' | 'play_item' | 'reverse_remaining'
 type PlaylistSyncAction = 'sync_bilibili' | 'sync_external'
 
 class AnalyticsService {
 	private async safeLogEvent(name: string, params?: Record<string, unknown>) {
 		try {
-			await logEvent(getAnalytics(), name, params)
+			logEvent(getAnalytics(), name, params)
 			logger.debug(`[Analytics] Logged event: ${name}`, params)
 		} catch (error) {
 			logger.warning(`[Analytics] Failed to log event: ${name}`, { error })
@@ -48,7 +48,12 @@ class AnalyticsService {
 
 	public async logPlaylistSync(
 		action: PlaylistSyncAction,
-		targetType: 'collection' | 'favorite' | 'multi_page' | 'external',
+		targetType:
+			| 'collection'
+			| 'series'
+			| 'favorite'
+			| 'multi_page'
+			| 'external',
 		itemCount: number,
 	) {
 		await this.safeLogEvent('playlist_sync', {

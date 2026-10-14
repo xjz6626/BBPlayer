@@ -9,6 +9,7 @@ import type { Track } from '@/types/core/media'
 import {
 	getPlayHistoryTimestampRange,
 	type PlayHistoryHeatmapRange,
+	getPlayHistoryHeatmapRange,
 } from '@/utils/playHistoryDateRange'
 
 export const playHistoryKeys = {
@@ -29,7 +30,9 @@ export const playHistoryKeys = {
 		[...playHistoryKeys.all, 'topPlayed', days, limit] as const,
 }
 
-export const usePlayHistoryHeatmap = (range: PlayHistoryHeatmapRange) => {
+export const usePlayHistoryHeatmap = (
+	range: PlayHistoryHeatmapRange = getPlayHistoryHeatmapRange(),
+) => {
 	return useQuery({
 		queryKey: playHistoryKeys.heatmap(range),
 		queryFn: async () => {

@@ -1,4 +1,4 @@
-import type { DownloadState } from '@bbplayer/orpheus'
+import { DownloadState } from '@bbplayer/orpheus'
 import { Icon as ExpoIcon, Host } from '@expo/ui'
 import type {
 	LegendListProps,
@@ -9,10 +9,10 @@ import { TrueSheet } from '@lodev09/react-native-true-sheet'
 import type { RefObject } from 'react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { ScrollView, StyleSheet, View } from 'react-native'
+import SquircleView from 'react-native-fast-squircle'
 import {
 	Divider,
 	List,
-	Surface,
 	Text,
 	TouchableRipple,
 	useTheme,
@@ -21,16 +21,19 @@ import type { MD3Theme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import ActivityIndicator from '@/components/common/ActivityIndicator'
+import CoverWithPlaceHolder from '@/components/common/CoverWithPlaceHolder'
 import useCurrentTrack from '@/hooks/player/useCurrentTrack'
 import { useBatchDownloadStatus } from '@/hooks/queries/orpheus'
 import usePreventRemove from '@/hooks/router/usePreventRemove'
-import useResolvedColorScheme from '@/hooks/theme/useResolvedColorScheme'
+import { useDeferredSheetAction } from '@/hooks/ui/useDeferredSheetAction'
+import { LIST_ITEM_COVER_SIZE } from '@/theme/dimensions'
 import type { Playlist, Track } from '@/types/core/media'
 import type {
 	ListRenderItemInfoWithExtraData,
 	SelectionState,
 } from '@/types/legendlist'
 import * as Haptics from '@/utils/haptics'
+import { resolveTrackCover } from '@/utils/imageUrl'
 
 import type { TrackMenuItem } from './LocalPlaylistItem'
 import { TrackListItem } from './LocalPlaylistItem'
@@ -184,13 +187,12 @@ const HighFreqButton = ({
 	onDismiss,
 }: {
 	item: TrackMenuItem
-	onDismiss: () => void
+	onDismiss: (action: () => void) => void
 }) => {
 	const theme = useTheme()
-	const colorScheme = useResolvedColorScheme()
 
 	return (
-		<Surface
+		<SquircleView
 			style={{
 				borderRadius: 16,
 				overflow: 'hidden',
@@ -198,12 +200,11 @@ const HighFreqButton = ({
 				flex: 1,
 				marginHorizontal: 4,
 			}}
-			elevation={0}
+			cornerSmoothing={0.6}
 		>
 			<TouchableRipple
 				onPress={() => {
-					onDismiss()
-					item.onPress()
+					onDismiss(item.onPress)
 				}}
 				style={{ flex: 1 }}
 			>
@@ -215,10 +216,7 @@ const HighFreqButton = ({
 						height: 80,
 					}}
 				>
-					<Host
-						colorScheme={colorScheme}
-						matchContents
-					>
+					<Host matchContents>
 						<ExpoIcon
 							name={item.leadingIcon}
 							size={28}
@@ -234,7 +232,7 @@ const HighFreqButton = ({
 					</Text>
 				</View>
 			</TouchableRipple>
-		</Surface>
+		</SquircleView>
 	)
 }
 
@@ -262,12 +260,14 @@ export function LocalTrackList({
 	const haveTrack = useCurrentTrack()
 	const insets = useSafeAreaInsets()
 	const theme = useTheme()
-	const colorScheme = useResolvedColorScheme()
 	const isReadOnly =
 		playlist.shareRole === 'subscriber' || playlist.type === 'dynamic'
 	const ids = tracks.map((t) => t.uniqueKey)
 	const { data: downloadStatus } = useBatchDownloadStatus(ids)
 	const sheetRef = useRef<TrueSheet>(null)
+	const menuScrollViewRef = useRef<ScrollView>(null)
+	const [menuSheetMounted, setMenuSheetMounted] = useState(false)
+	const { deferAction, runPendingAction } = useDeferredSheetAction()
 
 	const [menuState, setMenuState] = useState<{
 		visible: boolean
@@ -278,22 +278,38 @@ export function LocalTrackList({
 		track: null,
 		downloadState: undefined,
 	})
+	const setMenuSheetRef = useCallback((sheet: TrueSheet | null) => {
+		sheetRef.current = sheet
+		if (sheet) {
+			sheet.present().catch(() => {
+				setMenuState((prev) => ({ ...prev, visible: false }))
+			})
+		}
+	}, [])
 
 	const handleMenuPress = useCallback(
 		(track: Track, downloadState?: DownloadState) => {
 			setMenuState({ visible: true, track, downloadState })
-			sheetRef.current?.present().catch(() => {
-				setMenuState((prev) => ({ ...prev, visible: false }))
-			})
+			if (sheetRef.current) {
+				sheetRef.current?.present().catch(() => {
+					setMenuState((prev) => ({ ...prev, visible: false }))
+				})
+				return
+			}
+			setMenuSheetMounted(true)
 		},
 		[],
 	)
 
-	const dismissMenu = useCallback(() => {
-		sheetRef.current?.dismiss().catch(() => {
-			// ignore error
-		})
-	}, [])
+	const dismissMenu = useCallback(
+		(action?: () => void) => {
+			if (action) deferAction(action)
+			sheetRef.current?.dismiss().catch(() => {
+				// ignore error
+			})
+		},
+		[deferAction],
+	)
 
 	const { highFreqItems, normalItems } = (() => {
 		if (!menuState.track) return { highFreqItems: [], normalItems: [] }
@@ -384,106 +400,125 @@ export function LocalTrackList({
 				onEndReachedThreshold={0.8}
 				{...flashListProps}
 			/>
-			<TrueSheet
-				ref={sheetRef}
-				detents={['auto']}
-				cornerRadius={24}
-				backgroundColor={theme.colors.elevation.level1}
-				onDidDismiss={() => {
-					setMenuState((prev) => ({ ...prev, visible: false }))
-				}}
-			>
-				<ScrollView
-					style={{ maxHeight: '100%', marginTop: 32 }}
-					contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
+			{menuSheetMounted && (
+				<TrueSheet
+					ref={setMenuSheetRef}
+					detents={['auto']}
+					cornerRadius={24}
+					backgroundColor={theme.colors.elevation.level1}
+					style={{ flex: 1 }}
+					onDidDismiss={() => {
+						setMenuState((prev) => ({ ...prev, visible: false }))
+						runPendingAction()
+					}}
+					scrollableRef={menuScrollViewRef}
 				>
-					{menuState.track && (
-						<>
-							<View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
-								<Text
-									variant='titleMedium'
-									numberOfLines={1}
-								>
-									{menuState.track.title}
-								</Text>
-								<Text
-									variant='bodySmall'
-									style={{ opacity: 0.6 }}
-									numberOfLines={1}
-								>
-									{menuState.track.artist?.name ?? '未知艺术家'}
-								</Text>
-								<Divider style={{ marginTop: 12 }} />
-								{highFreqItems.length > 0 && (
+					<ScrollView
+						ref={menuScrollViewRef}
+						style={{ marginTop: 32, flex: 1 }}
+					>
+						{menuState.track && (
+							<>
+								<View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
 									<View
 										style={{
 											flexDirection: 'row',
-											paddingBottom: 12,
-											paddingTop: 16,
-											width: '100%',
+											gap: 8,
+											alignItems: 'center',
 										}}
 									>
-										{highFreqItems.map((item, index) => (
-											<HighFreqButton
-												// oxlint-disable-next-line react/no-array-index-key
-												key={index}
-												item={item}
-												onDismiss={dismissMenu}
-											/>
-										))}
-									</View>
-								)}
-							</View>
-
-							{normalItems.map((menuItem, index) => (
-								<List.Item
-									// oxlint-disable-next-line react/no-array-index-key
-									key={index}
-									title={menuItem.title}
-									titleStyle={
-										menuItem.danger ? { color: theme.colors.error } : {}
-									}
-									left={(props) =>
-										menuItem.leadingIcon ? (
-											<View
-												style={[
-													props.style,
-													{
-														width: 40,
-														height: 40,
-														alignItems: 'center',
-														justifyContent: 'center',
-													},
-												]}
-												pointerEvents='none'
+										<CoverWithPlaceHolder
+											id={menuState.track.id}
+											cover={
+												menuState.downloadState === DownloadState.COMPLETED
+													? resolveTrackCover(
+															menuState.track.uniqueKey,
+															menuState.track.coverUrl,
+														)
+													: menuState.track.coverUrl
+											}
+											title={menuState.track.title}
+											size={LIST_ITEM_COVER_SIZE}
+										/>
+										<View style={{ flex: 1, flexDirection: 'column' }}>
+											<Text variant='titleMedium'>{menuState.track.title}</Text>
+											<Text
+												variant='bodySmall'
+												style={{ opacity: 0.6 }}
+												numberOfLines={1}
 											>
-												<Host
-													colorScheme={colorScheme}
-													matchContents
+												{menuState.track.artist?.name ?? '未知艺术家'}
+											</Text>
+										</View>
+									</View>
+									<Divider style={{ marginTop: 12 }} />
+									{highFreqItems.length > 0 && (
+										<View
+											style={{
+												flexDirection: 'row',
+												paddingBottom: 12,
+												paddingTop: 16,
+												width: '100%',
+											}}
+										>
+											{highFreqItems.map((item, index) => (
+												<HighFreqButton
+													// oxlint-disable-next-line react/no-array-index-key
+													key={index}
+													item={item}
+													onDismiss={dismissMenu}
+												/>
+											))}
+										</View>
+									)}
+								</View>
+
+								{normalItems.map((menuItem, index) => (
+									<List.Item
+										// oxlint-disable-next-line react/no-array-index-key
+										key={index}
+										title={menuItem.title}
+										titleStyle={
+											menuItem.danger ? { color: theme.colors.error } : {}
+										}
+										left={(props) =>
+											menuItem.leadingIcon ? (
+												<View
+													style={[
+														props.style,
+														{
+															width: 40,
+															height: 40,
+															alignItems: 'center',
+															justifyContent: 'center',
+														},
+													]}
+													pointerEvents='none'
 												>
-													<ExpoIcon
-														name={menuItem.leadingIcon}
-														size={24}
-														color={
-															menuItem.danger
-																? theme.colors.error
-																: theme.colors.onSurface
-														}
-													/>
-												</Host>
-											</View>
-										) : null
-									}
-									onPress={() => {
-										dismissMenu()
-										menuItem.onPress()
-									}}
-								/>
-							))}
-						</>
-					)}
-				</ScrollView>
-			</TrueSheet>
+													<Host matchContents>
+														<ExpoIcon
+															name={menuItem.leadingIcon}
+															size={24}
+															color={
+																menuItem.danger
+																	? theme.colors.error
+																	: theme.colors.onSurface
+															}
+														/>
+													</Host>
+												</View>
+											) : null
+										}
+										onPress={() => {
+											dismissMenu(menuItem.onPress)
+										}}
+									/>
+								))}
+							</>
+						)}
+					</ScrollView>
+				</TrueSheet>
+			)}
 		</>
 	)
 }

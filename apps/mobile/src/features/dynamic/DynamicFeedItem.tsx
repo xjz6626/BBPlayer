@@ -12,10 +12,11 @@ import {
 	useTheme,
 } from 'react-native-paper'
 
-import FunctionalMenu from '@/components/common/FunctionalMenu'
+import { MenuView } from '@/components/common/FunctionalMenu'
 import SkinThumbUpBurst from '@/components/theme/SkinThumbUpBurst'
 import type { TrackMenuItem } from '@/features/playlist/remote/components/PlaylistItem'
 import { useModifyDynamicThumb } from '@/hooks/mutations/bilibili/dynamic'
+import { useMenuActions } from '@/hooks/ui/useMenuActions'
 import type { AppSkin } from '@/lib/theme/types'
 import type { BilibiliDynamicItem } from '@/types/apis/bilibili'
 import type { BilibiliTrack } from '@/types/core/media'
@@ -52,6 +53,14 @@ export default memo(function DynamicFeedItem({
 	const archiveSource = getBilibiliDynamicArchiveSource(item)
 	const archive = archiveSource?.archive
 	const track = useMemo(() => mapBilibiliDynamicItemToTrack(item), [item])
+	const menuActions = useMenuActions(
+		track
+			? trackMenuItems(track).map((menuItem) => ({
+					...menuItem,
+					image: menuItem.leadingIcon,
+				}))
+			: [],
+	)
 	const [isLiked, setIsLiked] = useState(stat?.like.status === true)
 	const [likeCount, setLikeCount] = useState(stat?.like.count ?? 0)
 	const [thumbUpBurstSignal, setThumbUpBurstSignal] = useState(0)
@@ -134,23 +143,12 @@ export default memo(function DynamicFeedItem({
 						</View>
 					</TouchableRipple>
 					{track ? (
-						<FunctionalMenu
-							anchor={
-								<IconButton
-									icon='dots-vertical'
-									size={20}
-								/>
-							}
-						>
-							{trackMenuItems(track).map((menuItem) => (
-								<FunctionalMenu.Item
-									key={menuItem.title}
-									title={menuItem.title}
-									leadingIcon={menuItem.leadingIcon}
-									onPress={menuItem.onPress}
-								/>
-							))}
-						</FunctionalMenu>
+						<MenuView {...menuActions}>
+							<IconButton
+								icon='dots-vertical'
+								size={20}
+							/>
+						</MenuView>
 					) : null}
 				</View>
 

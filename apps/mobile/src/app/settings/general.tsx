@@ -1,34 +1,38 @@
-import { exportBackupToDownloads } from '@bbplayer/native'
-import * as Expo from 'expo'
-import * as DocumentPicker from 'expo-document-picker'
 import * as FileSystem from 'expo-file-system'
-import { Image } from 'expo-image'
 import { useRouter } from 'expo-router'
 import * as Sharing from 'expo-sharing'
-import { useRef, useState } from 'react'
+import { useRef, useState, useSyncExternalStore } from 'react'
 import { ScrollView, StyleSheet, View } from 'react-native'
 import { Appbar, Text, useTheme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
+import { MenuView } from '@/components/common/FunctionalMenu'
 import IconButton from '@/components/common/IconButton'
+import SettingsSectionTitle from '@/components/common/SettingsSectionTitle'
 import UniversalSwitch from '@/components/common/UniversalSwitch'
-import { alert } from '@/components/modals/AlertModal'
-import NowPlayingBar from '@/components/NowPlayingBar'
 import useCurrentTrack from '@/hooks/player/useCurrentTrack'
 import useAppStore from '@/hooks/stores/useAppStore'
 import { useModalStore } from '@/hooks/stores/useModalStore'
-import { createBackup } from '@/lib/backup/export'
-import { restoreBackup } from '@/lib/backup/import'
+import { useMenuActions } from '@/hooks/ui/useMenuActions'
 import { checkForAppUpdate } from '@/lib/services/updateService'
 import { toastAndLogError } from '@/utils/error-handling'
+import {
+	getStartupScreen,
+	setStartupScreen as persistStartupScreen,
+	subscribeStartupScreen,
+} from '@/utils/startup-screen'
 import toast from '@/utils/toast'
+
+function setStartupScreen(screen: 'home' | 'library') {
+	persistStartupScreen(screen)
+}
 
 export default function GeneralSettingsPage() {
 	const router = useRouter()
 	const colors = useTheme().colors
 	const insets = useSafeAreaInsets()
-	const openModal = useModalStore((state) => state.open)
 	const haveTrack = useCurrentTrack()
+	const openModal = useModalStore((state) => state.open)
 
 	const setEnableDataCollection = useAppStore(
 		(state) => state.setEnableDataCollection,
@@ -39,9 +43,13 @@ export default function GeneralSettingsPage() {
 
 	const setEnableDebugLog = useAppStore((state) => state.setEnableDebugLog)
 	const enableDebugLog = useAppStore((state) => state.settings.enableDebugLog)
-
 	const expandMultiPageOnSync = useAppStore(
 		(state) => state.settings.expandMultiPageOnSync,
+	)
+
+	const startupScreen = useSyncExternalStore(
+		subscribeStartupScreen,
+		getStartupScreen,
 	)
 
 	const [isCheckingForUpdate, setIsCheckingForUpdate] = useState(false)
@@ -82,76 +90,18 @@ export default function GeneralSettingsPage() {
 		void performShareLog(setIsSharing, isSharingRef)
 	}
 
-	const [isExporting, setIsExporting] = useState(false)
-	const isExportingRef = useRef(false)
-
-	const handleExport = () => {
-		if (isExportingRef.current) return
-		isExportingRef.current = true
-		setIsExporting(true)
-		void (async () => {
-			try {
-				const uri = await createBackup()
-				const fileName = `backup-${Date.now()}.zip`
-
-				const downloadsUri = exportBackupToDownloads(
-					uri,
-					fileName,
-					'application/zip',
-				)
-				if (downloadsUri) {
-					toast.success('已导出到下载目录/bbplayer-backup')
-				} else {
-					toastAndLogError(
-						'导出失败',
-						new Error('无法写入文件'),
-						'UI.Settings.General',
-					)
-				}
-			} catch (e) {
-				toastAndLogError('导出失败', e, 'UI.Settings.General')
-			} finally {
-				setIsExporting(false)
-				isExportingRef.current = false
-			}
-		})()
-	}
-
-	const [isImporting, setIsImporting] = useState(false)
-	const isImportingRef = useRef(false)
-
-	const handleImport = () => {
-		if (isImportingRef.current) return
-		isImportingRef.current = true
-		setIsImporting(true)
-		void (async () => {
-			try {
-				const result = await DocumentPicker.getDocumentAsync()
-				if (result.canceled) return
-				const file = result.assets?.[0]
-				if (!file) return
-				await restoreBackup(file.uri)
-				alert(
-					'恢复完成',
-					'数据已恢复，需要重启应用才能完全生效。是否立即重启？',
-					[
-						{ text: '稍后' },
-						{
-							text: '立即重启',
-							onPress: () => {
-								void Expo.reloadAppAsync()
-							},
-						},
-					],
-				)
-			} catch (e) {
-				toastAndLogError('导入失败', e, 'UI.Settings.General')
-			} finally {
-				setIsImporting(false)
-				isImportingRef.current = false
-			}
-		})()
-	}
+	const menuActions = useMenuActions([
+		{
+			title: '搜索',
+			state: startupScreen === 'home' ? 'on' : 'off',
+			onPress: () => setStartupScreen('home'),
+		},
+		{
+			title: '音乐库',
+			state: startupScreen === 'library' ? 'on' : 'off',
+			onPress: () => setStartupScreen('library'),
+		},
+	])
 
 	return (
 		<View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -166,6 +116,21 @@ export default function GeneralSettingsPage() {
 					{ paddingBottom: insets.bottom + (haveTrack ? 70 + 20 : 20) },
 				]}
 			>
+				<SettingsSectionTitle
+					title='启动'
+					first
+				/>
+				<View style={styles.settingRow}>
+					<Text>启动时进入</Text>
+					<MenuView {...menuActions}>
+						<IconButton
+							icon='chevron-down'
+							size={20}
+						/>
+					</MenuView>
+				</View>
+
+				<SettingsSectionTitle title='隐私与数据' />
 				<View style={styles.settingRow}>
 					<Text>分享数据（崩溃报告 & 匿名统计）</Text>
 					<UniversalSwitch
@@ -173,24 +138,38 @@ export default function GeneralSettingsPage() {
 						onValueChange={setEnableDataCollection}
 					/>
 				</View>
+
+				<SettingsSectionTitle title='歌单同步' />
 				<View style={styles.settingRow}>
-					<Text>同步时展开分 P 视频</Text>
+					<View style={styles.settingTextContainer}>
+						<Text>同步时展开分 P 视频</Text>
+						<Text
+							variant='bodySmall'
+							style={{ color: colors.onSurfaceVariant }}
+						>
+							同步 Bilibili 收藏夹 / 合集时，把分 P 视频展开为独立曲目
+						</Text>
+					</View>
 					<UniversalSwitch
 						value={expandMultiPageOnSync ?? false}
-						onValueChange={(v) =>
+						onValueChange={(value) =>
 							// 使用 setSettings 方法会跳转到「2025-08-05 播放」的页面？but why？只能先使用 setState
 							useAppStore.setState((state) => {
-								state.settings.expandMultiPageOnSync = v
+								state.settings.expandMultiPageOnSync = value
 								return state
 							})
 						}
 					/>
 				</View>
+
+				<SettingsSectionTitle title='更新与维护' />
 				<View style={styles.settingRow}>
-					<Text>打开{'\u2009Debug\u2009'}日志</Text>
-					<UniversalSwitch
-						value={enableDebugLog}
-						onValueChange={setEnableDebugLog}
+					<Text>检查更新</Text>
+					<IconButton
+						icon='update'
+						size={20}
+						loading={isCheckingForUpdate}
+						onPress={handleCheckForUpdate}
 					/>
 				</View>
 				<View style={styles.settingRow}>
@@ -203,37 +182,13 @@ export default function GeneralSettingsPage() {
 						disabled={isSharing}
 					/>
 				</View>
+
+				<SettingsSectionTitle title='开发者' />
 				<View style={styles.settingRow}>
-					<Text>检查更新</Text>
-					<IconButton
-						icon='update'
-						size={20}
-						loading={isCheckingForUpdate}
-						onPress={handleCheckForUpdate}
-					/>
-				</View>
-				<View style={styles.settingRow}>
-					<Text>下载缺失封面</Text>
-					<IconButton
-						icon='image-sync'
-						size={20}
-						onPress={() => openModal('CoverDownloadProgress', undefined)}
-					/>
-				</View>
-				<View style={styles.settingRow}>
-					<Text>清空图片缓存</Text>
-					<IconButton
-						icon='image-remove'
-						size={20}
-						onPress={async () => {
-							try {
-								await Image.clearDiskCache()
-								await Image.clearMemoryCache()
-								toast.success('已清空图片缓存')
-							} catch (e) {
-								toastAndLogError('清空图片缓存失败', e, 'UI.Settings.General')
-							}
-						}}
+					<Text>打开{'\u2009Debug\u2009'}日志</Text>
+					<UniversalSwitch
+						value={enableDebugLog}
+						onValueChange={setEnableDebugLog}
 					/>
 				</View>
 				<View style={styles.settingRow}>
@@ -241,33 +196,18 @@ export default function GeneralSettingsPage() {
 					<IconButton
 						icon='open-in-new'
 						size={20}
-						onPress={() => router.push('/test')}
+						onPress={() => router.navigate('/test')}
 					/>
 				</View>
 				<View style={styles.settingRow}>
-					<Text>导出数据</Text>
+					<Text>性能</Text>
 					<IconButton
-						icon='export-variant'
+						icon='speedometer'
 						size={20}
-						onPress={handleExport}
-						loading={isExporting}
-						disabled={isExporting}
-					/>
-				</View>
-				<View style={styles.settingRow}>
-					<Text>导入数据</Text>
-					<IconButton
-						icon='import'
-						size={20}
-						onPress={handleImport}
-						loading={isImporting}
-						disabled={isImporting}
+						onPress={() => router.navigate('/performance')}
 					/>
 				</View>
 			</ScrollView>
-			<View style={styles.nowPlayingBarContainer}>
-				<NowPlayingBar />
-			</View>
 		</View>
 	)
 }
@@ -313,10 +253,8 @@ const styles = StyleSheet.create({
 		justifyContent: 'space-between',
 		marginTop: 16,
 	},
-	nowPlayingBarContainer: {
-		position: 'absolute',
-		bottom: 0,
-		left: 0,
-		right: 0,
+	settingTextContainer: {
+		flex: 1,
+		marginRight: 16,
 	},
 })

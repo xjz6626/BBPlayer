@@ -1,11 +1,9 @@
-import { createMMKV } from 'react-native-mmkv'
+import { ObservablePersistLocalStorageBase } from '@legendapp/state/persist-plugins/local-storage'
 import type { StateStorage } from 'zustand/middleware/persist'
 
-import type { TypedMMKVInterface } from '@/types/storage'
+import { mmkv, storage } from './mmkv-instance'
 
-const mmkv = createMMKV()
-
-export const storage = mmkv as unknown as TypedMMKVInterface
+export { storage } from './mmkv-instance'
 
 export const zustandStorage: StateStorage = {
 	setItem: (name, value) => {
@@ -22,3 +20,15 @@ export const zustandStorage: StateStorage = {
 		return storage.remove(name)
 	},
 }
+
+// Adapt our existing MMKV instance to Legend's synchronous storage plugin.
+export const legendPersistStorage = new ObservablePersistLocalStorageBase({
+	getItem: (key) => mmkv.getString(key) ?? null,
+	setItem: (key, value) => mmkv.set(key, value),
+	removeItem: (key) => mmkv.remove(key),
+	get length() {
+		return mmkv.getAllKeys().length
+	},
+	key: (index) => mmkv.getAllKeys()[index] ?? null,
+	clear: () => mmkv.clearAll(),
+})

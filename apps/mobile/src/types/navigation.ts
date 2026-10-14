@@ -42,12 +42,12 @@ export interface ModalPropsMap {
 		favoriteId: number
 		shouldRedirectToLocalPlaylist?: boolean
 	}
-	FavoriteSyncProgress: {
-		favoriteId: number
+	PlaylistSyncProgress: {
+		remoteId: number
+		type: 'favorite' | 'series'
 		shouldRedirectToLocalPlaylist?: boolean
 		expandMultiPage?: boolean
 	}
-	DanmakuSettings: undefined
 	CoverDownloadProgress: undefined
 	SkinDownloadProgress: { item: GarbSkinSearchResult }
 	EnableSharing: {
@@ -57,6 +57,7 @@ export interface ModalPropsMap {
 	}
 	SubscribeToSharedPlaylist: undefined
 	MergePlaylists: undefined
+	StarPrompt: undefined
 }
 
 export type ModalKey = keyof ModalPropsMap

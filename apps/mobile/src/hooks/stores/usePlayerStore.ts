@@ -6,6 +6,8 @@ import type { Track } from '@/types/core/media'
 import log from '@/utils/log'
 
 const logger = log.extend('Store.Player')
+let syncRevision = 0
+let initialized = false
 
 const createFallbackTrack = (track: OrpheusTrack): Track | null => {
 	try {
@@ -62,20 +64,27 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 	currentIndex: -1,
 
 	initialize: () => {
+		if (initialized) return
+		initialized = true
 		void get().sync()
 
 		Orpheus.addListener('onTrackStarted', async () => {
 			await get().sync()
 		})
+		Orpheus.addListener('onQueueChanged', async () => {
+			await get().sync()
+		})
 	},
 
 	sync: async () => {
+		const revision = ++syncRevision
 		try {
 			const [currentTrack, currentIndex] = await Promise.all([
 				Orpheus.getCurrentTrack(),
 				Orpheus.getCurrentIndex(),
 			])
 
+			if (revision !== syncRevision) return
 			const currentInternalTrackId = get().internalTrack?.uniqueKey
 			const newTrackId = currentTrack?.id
 
@@ -89,7 +98,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 			if (newTrackId !== currentInternalTrackId) {
 				const result = await trackService.getTrackByUniqueKey(currentTrack.id)
 
-				if (get().orpheusTrack?.id !== newTrackId) return
+				if (revision !== syncRevision || get().orpheusTrack?.id !== newTrackId)
+					return
 
 				if (result.isErr()) {
 					const fallbackTrack = createFallbackTrack(currentTrack)

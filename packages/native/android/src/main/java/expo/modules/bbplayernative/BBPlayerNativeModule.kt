@@ -4,6 +4,7 @@ import android.app.DownloadManager
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.database.Cursor
 import android.net.Uri
 import android.os.Build
@@ -15,9 +16,11 @@ import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.records.Field
 import expo.modules.kotlin.records.Record
+import expo.modules.kotlin.types.OptimizedRecord
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.util.zip.ZipInputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -27,16 +30,28 @@ class BBPlayerNativeModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("BBPlayerNative")
 
+        Constant("apkSigningCertificateSha256") {
+            apkSigningCertificateSha256
+        }
+
         AsyncFunction("canRequestPackageInstallsAsync") Coroutine { ->
-            val context = requireContext()
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-                return@Coroutine true
-            }
-            return@Coroutine context.packageManager.canRequestPackageInstalls()
+            requireContext().packageManager.canRequestPackageInstalls()
         }
 
         AsyncFunction("getSupportedAbisAsync") Coroutine { ->
             return@Coroutine Build.SUPPORTED_ABIS.toList()
+        }
+
+        AsyncFunction("getStorageUsageAsync") Coroutine { ->
+            withContext(Dispatchers.IO) { AppStorage.getUsage(requireContext()) }
+        }
+
+        AsyncFunction("clearCacheAsync") Coroutine { ->
+            withContext(Dispatchers.IO) { AppStorage.clearCache(requireContext()) }
+        }
+
+        AsyncFunction("listStorageDirectoryAsync") Coroutine { path: String ->
+            withContext(Dispatchers.IO) { AppStorage.listDirectory(requireContext(), path) }
         }
 
         AsyncFunction("openPackageInstallerSettingsAsync") {
@@ -56,22 +71,15 @@ class BBPlayerNativeModule : Module() {
                 openApkInstaller(context, downloadedUri)
             }
 
-            return@Coroutine mapOf(
-                "downloadId" to downloadId.toDouble(),
-                "uri" to downloadedUri.toString(),
-            )
+            return@Coroutine AppUpdateInstallResult().apply {
+                this.downloadId = downloadId
+                this.uri = downloadedUri.toString()
+            }
         }
 
 
         AsyncFunction("unzipAsync") Coroutine { options: UnzipOptions ->
-            val result = withContext(Dispatchers.IO) {
-                unzip(options)
-            }
-
-            return@Coroutine mapOf(
-                "uri" to result.uri,
-                "fileCount" to result.fileCount,
-            )
+            withContext(Dispatchers.IO) { unzip(options) }
         }
 
         Function("exportBackupToDownloads") { sourceUri: String, fileName: String, mimeType: String ->
@@ -116,8 +124,39 @@ class BBPlayerNativeModule : Module() {
     private fun requireContext(): Context =
         appContext.reactContext ?: throw IllegalStateException("React context is not available")
 
+    /**
+     * 当前 APK 签名证书的 SHA-256 指纹（小写十六进制）。
+     *
+     * 用于 Sentry 判断是否为官方签名构建：仓库开源、DSN 随包分发，无法阻止
+     * 别人故意滥用，但可以据此挡掉「用自己的密钥重新签名后重新构建」的包。
+     * 取不到时返回空串（例如 Expo Go），由 JS 侧决定如何处理。首次访问时
+     * 计算一次。
+     */
+    @Suppress("DEPRECATION")
+    private val apkSigningCertificateSha256: String by lazy {
+        runCatching {
+            val context = requireContext()
+            val signature = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                context.packageManager
+                    .getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+                    .signingInfo
+                    ?.apkContentsSigners
+                    ?.firstOrNull()
+            } else {
+                context.packageManager
+                    .getPackageInfo(context.packageName, PackageManager.GET_SIGNATURES)
+                    .signatures
+                    ?.firstOrNull()
+            }
+
+            signature
+                ?.let { MessageDigest.getInstance("SHA-256").digest(it.toByteArray()) }
+                ?.joinToString("") { byte -> "%02x".format(byte.toInt() and 0xFF) }
+                ?: ""
+        }.getOrDefault("")
+    }
+
     private fun ensureCanRequestPackageInstalls(context: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         if (context.packageManager.canRequestPackageInstalls()) return
 
         openPackageInstallerSettings(context)
@@ -125,7 +164,6 @@ class BBPlayerNativeModule : Module() {
     }
 
     private fun openPackageInstallerSettings(context: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val intent = Intent(
             Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
             Uri.parse("package:${context.packageName}"),
@@ -273,10 +311,10 @@ class BBPlayerNativeModule : Module() {
             }
         }
 
-        return UnzipResult(
-            uri = Uri.fromFile(outputDirectory).toString(),
-            fileCount = fileCount,
-        )
+        return UnzipResult().apply {
+            this.uri = Uri.fromFile(outputDirectory).toString()
+            this.fileCount = fileCount
+        }
     }
 
     private fun readUriBytes(context: Context, uri: String): ByteArray {
@@ -304,6 +342,7 @@ class BBPlayerNativeModule : Module() {
     }
 }
 
+@OptimizedRecord
 class AppUpdateDownloadOptions : Record {
     @Field
     var url: String = ""
@@ -318,6 +357,7 @@ class AppUpdateDownloadOptions : Record {
     var description: String? = null
 }
 
+@OptimizedRecord
 class UnzipOptions : Record {
     @Field
     var inputUri: String = ""
@@ -326,10 +366,23 @@ class UnzipOptions : Record {
     var outputUri: String = ""
 }
 
-private data class UnzipResult(
-    val uri: String,
-    val fileCount: Int,
-)
+@OptimizedRecord
+class AppUpdateInstallResult : Record {
+    @Field
+    var downloadId: Long = 0
+
+    @Field
+    var uri: String = ""
+}
+
+@OptimizedRecord
+class UnzipResult : Record {
+    @Field
+    var uri: String = ""
+
+    @Field
+    var fileCount: Int = 0
+}
 
 
 

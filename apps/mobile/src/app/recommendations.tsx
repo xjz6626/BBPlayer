@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router'
-import { useCallback, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { StyleSheet, View } from 'react-native'
 import { Appbar, Text, useTheme } from 'react-native-paper'
 
@@ -50,14 +50,14 @@ export default function RecommendationsPage() {
 		return Array.from(unique.values()).map(mapBilibiliVideoDetailsToTrack)
 	}, [data])
 
-	const refresh = useCallback(async () => {
+	const refresh = async () => {
 		setRefreshing(true)
 		try {
 			await refetch()
 		} finally {
 			setRefreshing(false)
 		}
-	}, [refetch])
+	}
 
 	if (isPending) return <PlaylistPageSkeleton />
 	if (isError) return <PlaylistError text='个性化推荐加载失败' />

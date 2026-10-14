@@ -14,7 +14,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import AnimatedModalOverlay from '@/components/common/AnimatedModalOverlay'
 import Button from '@/components/common/Button'
 import { alert } from '@/components/modals/AlertModal'
-import NowPlayingBar from '@/components/NowPlayingBar'
 import { SyncFailuresSheet } from '@/features/playlist/local/components/SyncFailuresSheet'
 import useCurrentTrack from '@/hooks/player/useCurrentTrack'
 import { useModalStore } from '@/hooks/stores/useModalStore'
@@ -22,12 +21,49 @@ import db, { expoDb } from '@/lib/db/db'
 import * as schema from '@/lib/db/schema'
 import { sharedPlaylistFacade } from '@/lib/facades/sharedPlaylist'
 import lyricService from '@/lib/services/lyricService'
+import { setUpdateChannelOverride } from '@/lib/services/updateTelemetry'
 import { toastAndLogError } from '@/utils/error-handling'
 import log from '@/utils/log'
 import { storage } from '@/utils/mmkv'
 import toast from '@/utils/toast'
 
 const logger = log.extend('TestPage')
+
+async function queryPlayHistoryByDateRange(startTime: number, endTime: number) {
+	return db
+		.select()
+		.from(schema.playHistory)
+		.where(
+			sql`${schema.playHistory.startTime} BETWEEN ${startTime} AND ${endTime}
+                        OR (${schema.playHistory.startTime} * 1000) BETWEEN ${startTime} AND ${endTime}`,
+		)
+}
+
+async function importMMKVFiles() {
+	const result = await DocumentPicker.getDocumentAsync({
+		type: '*/*',
+		copyToCacheDirectory: true,
+		multiple: true,
+	})
+
+	if (result.canceled) return
+
+	const mmkvDir = new Directory(Paths.document, 'mmkv')
+	if (!mmkvDir.exists) {
+		mmkvDir.create()
+	}
+
+	for (const asset of result.assets) {
+		const pickedFile = new File(asset.uri)
+		const targetFile = new File(mmkvDir, asset.name)
+		if (targetFile.exists) {
+			targetFile.delete()
+		}
+		pickedFile.copySync(targetFile)
+	}
+
+	toast.success('MMKV 导入成功')
+}
 
 export default function TestPage() {
 	const [loading, setLoading] = useState(false)
@@ -51,8 +87,9 @@ export default function TestPage() {
 			})
 		} catch (error) {
 			toast.error('检查更新失败', { description: String(error) })
+		} finally {
+			setLoading(false)
 		}
-		setLoading(false)
 	}
 
 	const testUpdatePackage = async () => {
@@ -63,7 +100,7 @@ export default function TestPage() {
 				await Updates.reloadAsync()
 				return
 			}
-			setLoading(true)
+
 			const result = await Updates.checkForUpdateAsync()
 			if (!result.isAvailable) {
 				toast.error('没有可用的更新', {
@@ -71,6 +108,7 @@ export default function TestPage() {
 				})
 				return
 			}
+
 			const updateResult = await Updates.fetchUpdateAsync()
 			if (updateResult.isNew) {
 				toast.success('有新版本可用', {
@@ -78,14 +116,32 @@ export default function TestPage() {
 				})
 				setTimeout(() => {
 					expoDb.closeSync()
-					setLoading(false) // I thought this is meaningless
 					void Updates.reloadAsync()
 				}, 1000)
 			}
 		} catch (error) {
 			toast.error('更新失败', { description: String(error) })
+		} finally {
+			setLoading(false)
 		}
-		setLoading(false)
+	}
+
+	const saveUpdateChannel = async (
+		channel: string,
+		checkForUpdate: boolean,
+	) => {
+		setLoading(true)
+		try {
+			await setUpdateChannelOverride(channel)
+			setUpdateChannelModalVisible(false)
+			if (checkForUpdate) {
+				await testCheckUpdate()
+			}
+		} catch (error) {
+			toast.error('设置热更新渠道失败', { description: String(error) })
+		} finally {
+			setLoading(false)
+		}
 	}
 
 	const handleDeleteAllDownloadRecords = () => {
@@ -243,32 +299,7 @@ export default function TestPage() {
 					onPress: async () => {
 						setLoading(true)
 						try {
-							const result = await DocumentPicker.getDocumentAsync({
-								type: '*/*',
-								copyToCacheDirectory: true,
-								multiple: true,
-							})
-
-							if (result.canceled) {
-								setLoading(false)
-								return
-							}
-
-							const mmkvDir = new Directory(Paths.document, 'mmkv')
-							if (!mmkvDir.exists) {
-								mmkvDir.create()
-							}
-
-							for (const asset of result.assets) {
-								const pickedFile = new File(asset.uri)
-								const targetFile = new File(mmkvDir, asset.name)
-								if (targetFile.exists) {
-									targetFile.delete()
-								}
-								pickedFile.copySync(targetFile)
-							}
-
-							toast.success('MMKV 导入成功')
+							await importMMKVFiles()
 						} catch (error) {
 							toastAndLogError('导入 MMKV 失败', error, 'TestPage')
 						}
@@ -297,17 +328,7 @@ export default function TestPage() {
 
 		setLoading(true)
 		try {
-			// 兼容秒和毫秒时间戳。
-			// 如果 startTime > 1e11，认为是毫秒；否则认为是秒。
-			// 我们查询时可以简单地查询两个范围，或者使用 SQL 表达式转换。
-			// 为了简单起见，我们在 JS 端处理或者用 OR。
-			const rows = await db
-				.select()
-				.from(schema.playHistory)
-				.where(
-					sql`${schema.playHistory.startTime} BETWEEN ${startTime} AND ${endTime}
-                        OR (${schema.playHistory.startTime} * 1000) BETWEEN ${startTime} AND ${endTime}`,
-				)
+			const rows = await queryPlayHistoryByDateRange(startTime, endTime)
 
 			logger.info(`查询 ${queryDate} 的播放历史:`, rows)
 			toast.success(`查询成功: ${queryDate}`, {
@@ -331,7 +352,7 @@ export default function TestPage() {
 				<View style={styles.buttonContainer}>
 					<Button
 						mode='contained'
-						onPress={() => router.push('/onboarding')}
+						onPress={() => router.navigate('/onboarding')}
 						style={styles.button}
 					>
 						Onboarding 页面测试
@@ -341,7 +362,8 @@ export default function TestPage() {
 						onPress={() => {
 							storage.set('first_open', true)
 							expoDb.closeSync()
-							void Updates.reloadAsync()
+							const { DevSettings } = require('react-native')
+							DevSettings.reload()
 						}}
 						style={styles.button}
 					>
@@ -453,9 +475,6 @@ export default function TestPage() {
 					</View>
 				</View>
 			</ScrollView>
-			<View style={styles.nowPlayingBarContainer}>
-				<NowPlayingBar />
-			</View>
 
 			<Portal>
 				<AnimatedModalOverlay
@@ -486,30 +505,19 @@ export default function TestPage() {
 						<Button onPress={() => setUpdateChannelModalVisible(false)}>
 							取消
 						</Button>
-						<Button
-							onPress={() => {
-								setUpdateChannelModalVisible(false)
-								Updates.setUpdateRequestHeadersOverride({
-									'expo-channel-name': 'production',
-								})
-							}}
-						>
+						<Button onPress={() => void saveUpdateChannel('production', false)}>
 							恢复默认
 						</Button>
 						<Button
-							onPress={() => {
-								setUpdateChannelModalVisible(false)
-								Updates.setUpdateRequestHeadersOverride({
-									'expo-channel-name': updateChannel,
-								})
-								void testCheckUpdate()
-							}}
+							disabled={!updateChannel.trim()}
+							onPress={() => void saveUpdateChannel(updateChannel.trim(), true)}
 						>
 							保存并查询是否有更新
 						</Button>
 					</Dialog.Actions>
 				</AnimatedModalOverlay>
 			</Portal>
+
 			<SyncFailuresSheet
 				ref={syncFailuresSheetRef}
 				useMockData
@@ -531,11 +539,5 @@ const styles = StyleSheet.create({
 	},
 	button: {
 		marginBottom: 8,
-	},
-	nowPlayingBarContainer: {
-		position: 'absolute',
-		bottom: 0,
-		left: 0,
-		right: 0,
 	},
 })

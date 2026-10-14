@@ -26,6 +26,7 @@ export type SearchStrategy =
 	| { type: 'BVID'; bvid: string }
 	| { type: 'FAVORITE'; id: string }
 	| { type: 'COLLECTION'; id: string }
+	| { type: 'SERIES'; id: string }
 	| { type: 'SEARCH'; query: string }
 	| { type: 'INVALID_URL_NO_CTYPE' }
 	| { type: 'B23_RESOLVE_ERROR'; query: string; error: Error }
@@ -63,14 +64,13 @@ export async function matchSearchStrategies(
 			return { type: 'FAVORITE', id: fid }
 		}
 
-		// 处理 space.bilibili.com 域名，如果后面包含 `lists`，则认为是合集，否则为个人空间
+		// 系列链接必须保留 type=series；普通 lists 链接是合集。
 		if (urlObj.hostname === 'space.bilibili.com') {
-			const sliced = urlObj.pathname.split('/')
-			sliced.shift()
+			const sliced = urlObj.pathname.split('/').filter(Boolean)
 			const mid = sliced.shift()
 			if (mid) {
-				if (sliced.includes('lists')) {
-					const collectionId = sliced.pop()
+				if (sliced[0] === 'lists') {
+					const collectionId = sliced[1]
 					if (!collectionId) {
 						logger.debug(
 							'parseUrlToStrategy: 匹配 space.bilibili.com/<mid>/lists',
@@ -86,7 +86,10 @@ export async function matchSearchStrategies(
 							collectionId,
 						},
 					)
-					return { type: 'COLLECTION', id: collectionId }
+					if (!/^\d+$/.test(collectionId)) return null
+					return urlObj.searchParams.get('type') === 'series'
+						? { type: 'SERIES', id: collectionId }
+						: { type: 'COLLECTION', id: collectionId }
 				}
 				logger.debug('parseUrlToStrategy: 匹配 space.bilibili.com/<mid>', {
 					mid,
@@ -242,35 +245,41 @@ export function navigateWithSearchStrategy(
 			logger.debug('Navigating to PlaylistMultipage with bvid', {
 				bvid: strategy.bvid,
 			})
-			router.push({
+			router.navigate({
 				pathname: '/playlist/remote/multipage/[bvid]',
 				params: { bvid: strategy.bvid },
 			})
 			return 0
 		case 'FAVORITE':
 			logger.debug('Navigating to PlaylistFavorite', { id: strategy.id })
-			router.push({
+			router.navigate({
 				pathname: '/playlist/remote/favorite/[id]',
 				params: { id: strategy.id },
 			})
 			return 0
 		case 'COLLECTION':
 			logger.debug('Navigating to PlaylistCollection', { id: strategy.id })
-			router.push({
+			router.navigate({
 				pathname: '/playlist/remote/collection/[id]',
+				params: { id: strategy.id },
+			})
+			return 0
+		case 'SERIES':
+			router.navigate({
+				pathname: '/playlist/remote/series/[id]',
 				params: { id: strategy.id },
 			})
 			return 0
 		case 'UPLOADER':
 			logger.debug('Navigating to PlaylistUploader', { mid: strategy.mid })
-			router.push({
+			router.navigate({
 				pathname: '/playlist/remote/uploader/[mid]',
 				params: { mid: strategy.mid },
 			})
 			return 0
 		case 'SEARCH':
 			logger.debug('Navigating to SearchResult', { query: strategy.query })
-			router.push({
+			router.navigate({
 				pathname: '/playlist/remote/search-result/global/[query]',
 				params: { query: strategy.query },
 			})
@@ -280,7 +289,7 @@ export function navigateWithSearchStrategy(
 			return 0
 		case 'B23_RESOLVE_ERROR':
 			toastAndLogError('解析 b23.tv 短链接失败', strategy.error, 'Utils.Search')
-			router.push({
+			router.navigate({
 				pathname: '/playlist/remote/search-result/global/[query]',
 				params: { query: strategy.query },
 			})
@@ -291,7 +300,7 @@ export function navigateWithSearchStrategy(
 				new Error(strategy.resolvedUrl),
 				'Utils.Search',
 			)
-			router.push({
+			router.navigate({
 				pathname: '/playlist/remote/search-result/global/[query]',
 				params: { query: strategy.query },
 			})
@@ -302,7 +311,7 @@ export function navigateWithSearchStrategy(
 				new Error(strategy.query),
 				'Utils.Search',
 			)
-			router.push({
+			router.navigate({
 				pathname: '/playlist/remote/search-result/global/[query]',
 				params: { query: strategy.query },
 			})

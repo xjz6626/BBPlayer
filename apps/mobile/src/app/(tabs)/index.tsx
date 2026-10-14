@@ -365,7 +365,7 @@ function HomePage() {
 								icon={isLoading ? 'loading' : 'magnify'}
 								onClearIconPress={() => setSearchQuery('')}
 								onSubmitEditing={() => handleEnter(searchQuery)}
-								onFocus={() => setSearchFocused(true)}
+								onFocus={() => router.navigate('/search')}
 								onBlur={() => setSearchFocused(false)}
 								elevation={0}
 								mode='bar'

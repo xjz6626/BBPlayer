@@ -1,4 +1,5 @@
-import { Orpheus } from '@bbplayer/orpheus'
+import { Orpheus, useSpectrumVisualizerEnabled } from '@bbplayer/orpheus'
+import { Observe } from 'expo-observe'
 import { useEffect } from 'react'
 
 import { useAppStore } from '@/hooks/stores/useAppStore'
@@ -11,8 +12,10 @@ import { analyticsService } from '@/lib/services/analyticsService'
 export function useFeatureTracking() {
 	const settings = useAppStore((state) => state.settings)
 	const { enableDataCollection } = settings
+	const enableSpectrumVisualizer = useSpectrumVisualizerEnabled()
 
 	useEffect(() => {
+		Observe.configure({ dispatchingEnabled: enableDataCollection })
 		void analyticsService.setAnalyticsCollectionEnabled(enableDataCollection)
 
 		if (!enableDataCollection) return
@@ -29,11 +32,6 @@ export function useFeatureTracking() {
 			'setting_now_playing_bar_style',
 			settings.nowPlayingBarStyle,
 		)
-		void analyticsService.setUserProperty(
-			'setting_danmaku_enable',
-			String(settings.enableDanmaku),
-		)
-
 		void analyticsService.setUserProperty(
 			'setting_desktop_lyric',
 			String(Orpheus.isDesktopLyricsShown),
@@ -53,11 +51,11 @@ export function useFeatureTracking() {
 
 		void analyticsService.setUserProperty(
 			'setting_visualizer',
-			String(settings.enableSpectrumVisualizer),
+			String(enableSpectrumVisualizer),
 		)
 		void analyticsService.setUserProperty(
 			'setting_persist_pos',
 			String(Orpheus.restorePlaybackPositionEnabled),
 		)
-	}, [settings, enableDataCollection])
+	}, [settings, enableDataCollection, enableSpectrumVisualizer])
 }

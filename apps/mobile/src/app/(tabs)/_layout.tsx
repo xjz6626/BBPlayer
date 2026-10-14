@@ -33,9 +33,9 @@ interface nonNullableIcon {
 	scale: number
 }
 
-const homeIcon = Icon.getImageSourceSync('home', 24) as nonNullableIcon
+const searchIcon = Icon.getImageSourceSync('magnify', 24) as nonNullableIcon
 const libraryIcon = Icon.getImageSourceSync('bookshelf', 24) as nonNullableIcon
-const settingsIcon = Icon.getImageSourceSync('cog', 24) as nonNullableIcon
+const profileIcon = Icon.getImageSourceSync('account', 24) as nonNullableIcon
 
 const validColor = (value: string | null | undefined, fallback: string) => {
 	if (!value) return fallback
@@ -91,7 +91,7 @@ export default function TabLayout() {
 					? 'dynamic'
 					: null,
 				skinIcons?.settings.default && skinIcons.settings.selected
-					? 'settings/index'
+					? 'my'
 					: null,
 			].filter((route): route is string => route !== null),
 		[skinIcons],
@@ -132,14 +132,15 @@ export default function TabLayout() {
 			<Tabs.Screen
 				name='index'
 				options={{
-					title: '主页',
+					title: '首页',
 					tabBarIcon: ({ focused }) => {
+						// 旧皮肤仍使用 home 作为第一个标签的图标槽位。
 						const icon = focused
 							? skinIcons?.home.selected
 							: skinIcons?.home.default
-						return icon ? { uri: icon, scale: 1 } : homeIcon
+						return icon ? { uri: icon, scale: 1 } : searchIcon
 					},
-					tabBarLabel: '主页',
+					tabBarLabel: '首页',
 					lazy: true,
 				}}
 			/>
@@ -180,16 +181,17 @@ export default function TabLayout() {
 				}}
 			/>
 			<Tabs.Screen
-				name='settings/index'
+				name='my'
 				options={{
-					title: '设置',
+					title: '我的',
 					tabBarIcon: ({ focused }) => {
+						// 旧皮肤仍使用 settings 作为第三个标签的图标槽位。
 						const icon = focused
 							? skinIcons?.settings.selected
 							: skinIcons?.settings.default
-						return icon ? { uri: icon, scale: 1 } : settingsIcon
+						return icon ? { uri: icon, scale: 1 } : profileIcon
 					},
-					tabBarLabel: '设置',
+					tabBarLabel: '我的',
 					lazy: true,
 				}}
 			/>

@@ -46,8 +46,8 @@ class ShuffleManager(private val getPlayer: () -> ExoPlayer?) {
         isShuffleEnabled = enabled
         GeneralStorage.saveShuffleMode(enabled)
 
-        if (enabled) {
-            val count = player.mediaItemCount
+        val count = player.mediaItemCount
+        if (enabled && count > 0) {
             val currentPhysical = player.currentMediaItemIndex
             // Build a shuffled order with the current item first so it isn't skipped.
             val others = (0 until count).filter { it != currentPhysical }.shuffled()
@@ -126,5 +126,15 @@ class ShuffleManager(private val getPlayer: () -> ExoPlayer?) {
 
         player.setShuffleOrder(DefaultShuffleOrder(order.toIntArray(), System.currentTimeMillis()))
         Log.d("ShuffleManager", "Repositioned physical[$insertedPhysicalIndex] as next in shuffle order")
+    }
+
+    /** Reorder the displayed shuffle traversal without moving physical media items. */
+    fun moveInTraversal(fromIndex: Int, toIndex: Int) {
+        if (!isShuffleEnabled) return
+        val player = getPlayer() ?: return
+        val order = getTraversalOrder()?.toMutableList() ?: return
+        if (fromIndex !in order.indices || toIndex !in order.indices || fromIndex == toIndex) return
+        order.add(toIndex, order.removeAt(fromIndex))
+        player.setShuffleOrder(DefaultShuffleOrder(order.toIntArray(), System.currentTimeMillis()))
     }
 }

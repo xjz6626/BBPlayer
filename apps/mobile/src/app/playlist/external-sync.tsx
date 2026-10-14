@@ -22,6 +22,7 @@ import { PlaylistPageSkeleton } from '@/features/playlist/skeletons/PlaylistSkel
 import { playlistKeys } from '@/hooks/queries/db/playlist'
 import { useExternalPlaylist } from '@/hooks/queries/external-playlist/useExternalPlaylist'
 import usePreventRemove from '@/hooks/router/usePreventRemove'
+import { useScreenTransitionReady } from '@/hooks/router/useScreenTransitionReady'
 import {
 	ExternalPlaylistSyncStoreProvider,
 	useExternalPlaylistSyncStore,
@@ -174,6 +175,7 @@ const renderItem = ({
 }
 
 const ExternalPlaylistSyncPageInner = () => {
+	const isListReady = useScreenTransitionReady()
 	const { id, source } = useLocalSearchParams<{
 		id: string
 		source: 'netease' | 'qq'
@@ -425,8 +427,8 @@ const ExternalPlaylistSyncPageInner = () => {
 		[],
 	)
 
-	if (isLoading) {
-		return <PlaylistPageSkeleton />
+	if (isLoading || !isListReady) {
+		return <PlaylistPageSkeleton animate={isListReady} />
 	}
 
 	if (error || !data) {

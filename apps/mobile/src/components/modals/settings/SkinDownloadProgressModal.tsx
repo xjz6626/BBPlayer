@@ -55,7 +55,7 @@ const SkinDownloadProgressModal = memo(function SkinDownloadProgressModal({
 							{ text: '稍后' },
 							{
 								text: '去启用',
-								onPress: () => router.replace('/settings/theme'),
+								onPress: () => router.replace('/settings/appearance'),
 							},
 						],
 						message: '是否现在去启用这个主题？',

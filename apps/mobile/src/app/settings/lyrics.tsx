@@ -6,17 +6,29 @@ import { AppState, Platform, ScrollView, StyleSheet, View } from 'react-native'
 import { Appbar, Text, useTheme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
-import FunctionalMenu from '@/components/common/FunctionalMenu'
+import { MenuView } from '@/components/common/FunctionalMenu'
 import IconButton from '@/components/common/IconButton'
-import UniversalCheckboxItem from '@/components/common/UniversalCheckboxItem'
+import SettingsSectionTitle from '@/components/common/SettingsSectionTitle'
 import UniversalSwitch from '@/components/common/UniversalSwitch'
 import { alert } from '@/components/modals/AlertModal'
-import NowPlayingBar from '@/components/NowPlayingBar'
 import useCurrentTrack from '@/hooks/player/useCurrentTrack'
 import { useAppStore } from '@/hooks/stores/useAppStore'
+import { useMenuActions } from '@/hooks/ui/useMenuActions'
 import lyricService from '@/lib/services/lyricService'
 import { toastAndLogError } from '@/utils/error-handling'
 import toast from '@/utils/toast'
+
+function applyStatusBarLyricsProvider(
+	provider: 'superlyric' | 'lyricon' | 'meizu',
+	syncStates: () => void,
+) {
+	try {
+		Orpheus.statusBarLyricsProvider = provider
+		syncStates()
+	} catch (e) {
+		toastAndLogError('设置失败', e, 'Settings')
+	}
+}
 
 export default function LyricsSettingsPage() {
 	const router = useRouter()
@@ -55,9 +67,6 @@ export default function LyricsSettingsPage() {
 	)
 	const setSettings = useAppStore((state) => state.setSettings)
 
-	const [lyricSourceMenuVisible, setLyricSourceMenuVisible] = useState(false)
-	const [providerMenuVisible, setProviderMenuVisible] = useState(false)
-
 	const isStatusBarLyricsProviderActive =
 		statusBarLyricsProvider === 'lyricon'
 			? isLyriconApiEnabled
@@ -84,6 +93,52 @@ export default function LyricsSettingsPage() {
 		setStatusBarLyricsProvider(Orpheus.statusBarLyricsProvider ?? 'lyricon')
 	}, [])
 
+	const providerMenu = useMenuActions([
+		{
+			title: `SuperLyric${!isSuperLyricApiEnabled ? '（未激活）' : ''}`,
+			state: statusBarLyricsProvider === 'superlyric' ? 'on' : 'off',
+			onPress: () => applyStatusBarLyricsProvider('superlyric', syncStates),
+		},
+		{
+			title: `词幕 (Lyricon)${statusBarLyricsProvider === 'lyricon' && !isLyriconApiEnabled ? '（未连接）' : ''}`,
+			state: statusBarLyricsProvider === 'lyricon' ? 'on' : 'off',
+			onPress: () => applyStatusBarLyricsProvider('lyricon', syncStates),
+		},
+		{
+			title: '魅族状态栏歌词',
+			state: statusBarLyricsProvider === 'meizu' ? 'on' : 'off',
+			onPress: () => applyStatusBarLyricsProvider('meizu', syncStates),
+		},
+	])
+
+	const lyricSourceMenu = useMenuActions([
+		{
+			title: '网易云音乐',
+			state: lyricSource === 'netease' ? 'on' : 'off',
+			onPress: () => setSettings({ lyricSource: 'netease' }),
+		},
+		{
+			title: 'QQ 音乐',
+			state: lyricSource === 'qqmusic' ? 'on' : 'off',
+			onPress: () => setSettings({ lyricSource: 'qqmusic' }),
+		},
+		{
+			title: '酷狗音乐',
+			state: lyricSource === 'kugou' ? 'on' : 'off',
+			onPress: () => setSettings({ lyricSource: 'kugou' }),
+		},
+		{
+			title: '自动 (选择最先返回的数据源)',
+			state: lyricSource === 'auto' ? 'on' : 'off',
+			onPress: () => {
+				setSettings({ lyricSource: 'auto' })
+				toast.info(
+					'「自动」的意思是：选择最先返回的数据源，但不会考虑匹配度，所以不保证结果一定是最好的',
+				)
+			},
+		},
+	])
+
 	const enableDesktopLyrics = async () => {
 		try {
 			const hasPermission = await Orpheus.checkOverlayPermission()
@@ -93,7 +148,7 @@ export default function LyricsSettingsPage() {
 				// 立即推送当前正在播放的歌词，不等下一首
 				const currentTrack = await Orpheus.getCurrentTrack()
 				if (currentTrack) {
-					lyricService.pushLyricsToOverlays(currentTrack.id)
+					void lyricService.pushLyricsToOverlays(currentTrack.id)
 				}
 				return
 			}
@@ -155,6 +210,10 @@ export default function LyricsSettingsPage() {
 					{ paddingBottom: insets.bottom + (haveTrack ? 70 + 20 : 20) },
 				]}
 			>
+				<SettingsSectionTitle
+					title='歌词显示'
+					first
+				/>
 				<View style={styles.settingRow}>
 					<Text>显示逐字歌词</Text>
 					<UniversalSwitch
@@ -177,6 +236,7 @@ export default function LyricsSettingsPage() {
 				</View>
 				{Platform.OS === 'android' && (
 					<>
+						<SettingsSectionTitle title='系统歌词（仅 Android）' />
 						<View style={styles.settingRow}>
 							<Text>桌面歌词</Text>
 							<UniversalSwitch
@@ -235,7 +295,7 @@ export default function LyricsSettingsPage() {
 										if (next) {
 											const currentTrack = await Orpheus.getCurrentTrack()
 											if (currentTrack) {
-												lyricService.pushLyricsToOverlays(currentTrack.id)
+												void lyricService.pushLyricsToOverlays(currentTrack.id)
 											}
 										}
 									} catch (e) {
@@ -246,72 +306,12 @@ export default function LyricsSettingsPage() {
 						</View>
 						<View style={styles.settingRow}>
 							<Text>状态栏歌词框架</Text>
-							<FunctionalMenu
-								visible={providerMenuVisible}
-								onDismiss={() => setProviderMenuVisible(false)}
-								anchor={
-									<IconButton
-										icon='playlist-music'
-										size={20}
-										onPress={() => setProviderMenuVisible(true)}
-									/>
-								}
-							>
-								<UniversalCheckboxItem
-									mode='ios'
-									label={`SuperLyric${!isSuperLyricApiEnabled ? '（未激活）' : ''}`}
-									status={
-										statusBarLyricsProvider === 'superlyric'
-											? 'checked'
-											: 'unchecked'
-									}
-									onPress={() => {
-										try {
-											Orpheus.statusBarLyricsProvider = 'superlyric'
-											void syncStates()
-										} catch (e) {
-											toastAndLogError('设置失败', e, 'Settings')
-										}
-										setProviderMenuVisible(false)
-									}}
+							<MenuView {...providerMenu}>
+								<IconButton
+									icon='playlist-music'
+									size={20}
 								/>
-								<UniversalCheckboxItem
-									mode='ios'
-									label={`词幕 (Lyricon)${statusBarLyricsProvider === 'lyricon' && !isLyriconApiEnabled ? '（未连接）' : ''}`}
-									status={
-										statusBarLyricsProvider === 'lyricon'
-											? 'checked'
-											: 'unchecked'
-									}
-									onPress={() => {
-										try {
-											Orpheus.statusBarLyricsProvider = 'lyricon'
-											void syncStates()
-										} catch (e) {
-											toastAndLogError('设置失败', e, 'Settings')
-										}
-										setProviderMenuVisible(false)
-									}}
-								/>
-								<UniversalCheckboxItem
-									mode='ios'
-									label='魅族状态栏歌词'
-									status={
-										statusBarLyricsProvider === 'meizu'
-											? 'checked'
-											: 'unchecked'
-									}
-									onPress={() => {
-										try {
-											Orpheus.statusBarLyricsProvider = 'meizu'
-											void syncStates()
-										} catch (e) {
-											toastAndLogError('设置失败', e, 'Settings')
-										}
-										setProviderMenuVisible(false)
-									}}
-								/>
-							</FunctionalMenu>
+							</MenuView>
 						</View>
 						<View style={styles.settingRow}>
 							<View style={{ flex: 1, marginRight: 16 }}>
@@ -358,7 +358,7 @@ export default function LyricsSettingsPage() {
 											// 立即推送当前歌词
 											const currentTrack = await Orpheus.getCurrentTrack()
 											if (currentTrack) {
-												lyricService.pushLyricsToOverlays(currentTrack.id)
+												void lyricService.pushLyricsToOverlays(currentTrack.id)
 											}
 										}
 									} catch (e) {
@@ -369,64 +369,17 @@ export default function LyricsSettingsPage() {
 						</View>
 					</>
 				)}
+				<SettingsSectionTitle title='歌词来源' />
 				<View style={styles.settingRow}>
 					<Text>自动匹配的歌词源（不影响手动搜索）</Text>
-					<FunctionalMenu
-						visible={lyricSourceMenuVisible}
-						onDismiss={() => setLyricSourceMenuVisible(false)}
-						anchor={
-							<IconButton
-								icon='playlist-music'
-								size={20}
-								onPress={() => setLyricSourceMenuVisible(true)}
-							/>
-						}
-					>
-						<UniversalCheckboxItem
-							mode='ios'
-							label='网易云音乐'
-							status={lyricSource === 'netease' ? 'checked' : 'unchecked'}
-							onPress={() => {
-								setSettings({ lyricSource: 'netease' })
-								setLyricSourceMenuVisible(false)
-							}}
+					<MenuView {...lyricSourceMenu}>
+						<IconButton
+							icon='playlist-music'
+							size={20}
 						/>
-						<UniversalCheckboxItem
-							mode='ios'
-							label='QQ 音乐'
-							status={lyricSource === 'qqmusic' ? 'checked' : 'unchecked'}
-							onPress={() => {
-								setSettings({ lyricSource: 'qqmusic' })
-								setLyricSourceMenuVisible(false)
-							}}
-						/>
-						<UniversalCheckboxItem
-							mode='ios'
-							label='酷狗音乐'
-							status={lyricSource === 'kugou' ? 'checked' : 'unchecked'}
-							onPress={() => {
-								setSettings({ lyricSource: 'kugou' })
-								setLyricSourceMenuVisible(false)
-							}}
-						/>
-						<UniversalCheckboxItem
-							mode='ios'
-							label='自动 (选择最先返回的数据源)'
-							status={lyricSource === 'auto' ? 'checked' : 'unchecked'}
-							onPress={() => {
-								setSettings({ lyricSource: 'auto' })
-								setLyricSourceMenuVisible(false)
-								toast.info(
-									'「自动」的意思是：选择最先返回的数据源，但不会考虑匹配度，所以不保证结果一定是最好的',
-								)
-							}}
-						/>
-					</FunctionalMenu>
+					</MenuView>
 				</View>
 			</ScrollView>
-			<View style={styles.nowPlayingBarContainer}>
-				<NowPlayingBar />
-			</View>
 		</View>
 	)
 }
@@ -446,11 +399,5 @@ const styles = StyleSheet.create({
 		alignItems: 'center',
 		justifyContent: 'space-between',
 		marginTop: 16,
-	},
-	nowPlayingBarContainer: {
-		position: 'absolute',
-		bottom: 0,
-		left: 0,
-		right: 0,
 	},
 })

@@ -64,7 +64,10 @@ export interface LocalTrack extends BaseTrack {
 
 export type Track = BilibiliTrack | LocalTrack
 
+export type PlaylistPlayerPreference = 'inherit' | 'music' | 'podcast'
+
 export interface Playlist {
+	playerPreference: PlaylistPlayerPreference
 	id: number
 	title: string
 	author: Artist | null // 本地播放列表不存在 author
@@ -72,7 +75,13 @@ export interface Playlist {
 	coverUrl: string | null
 	itemCount: number
 	contents?: Track[]
-	type: 'favorite' | 'collection' | 'multi_page' | 'local' | 'dynamic'
+	type:
+		| 'favorite'
+		| 'collection'
+		| 'series'
+		| 'multi_page'
+		| 'local'
+		| 'dynamic'
 	remoteSyncId: number | null
 	lastSyncedAt: Date | null
 	// 歌单分享功能字段

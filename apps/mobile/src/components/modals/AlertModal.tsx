@@ -9,6 +9,8 @@ export interface AlertButton {
 	onPress?: () => void
 	/** 由回调原地替换当前弹窗时设为 false，避免 ModalHost 先退出再进入。 */
 	closeOnPress?: boolean
+	/** 默认等待所有 modal 关闭后再执行，设为 false 可在关闭当前 Alert 后立即执行。 */
+	afterModalHostClosed?: boolean
 }
 
 export interface AlertOptions {
@@ -50,6 +52,10 @@ export default function AlertModal({
 						return
 					}
 					close('Alert')
+					if (button.afterModalHostClosed === false) {
+						button.onPress?.()
+						return
+					}
 					useModalStore.getState().doAfterModalHostClosed(() => {
 						button.onPress?.()
 					})

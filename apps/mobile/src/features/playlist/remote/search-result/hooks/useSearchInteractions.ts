@@ -53,7 +53,7 @@ export function useSearchInteractions() {
 					normalizedTitle.includes(cleanString(keyword)),
 				)
 			) {
-				router.push({
+				router.navigate({
 					pathname: '/playlist/remote/multipage/[bvid]',
 					params: { bvid: track.bilibiliMetadata.bvid },
 				})
@@ -73,14 +73,14 @@ export function useSearchInteractions() {
 				)
 				return
 			}
-			await addToQueue({
-				tracks: [createIt.value],
+			const added = await addToQueue({
+				tracks: [track],
 				playNow: !playNext,
 				clearQueue: false,
 				playNext: playNext,
 				startFromKey: createIt.value.uniqueKey,
 			})
-			if (playNext) {
+			if (added && playNext) {
 				toast.success('添加到下一首播放成功')
 			}
 		},
@@ -98,7 +98,7 @@ export function useSearchInteractions() {
 				title: '查看详细信息',
 				leadingIcon: INFO_ICON,
 				onPress: () => {
-					router.push({
+					router.navigate({
 						pathname: '/playlist/remote/multipage/[bvid]',
 						params: { bvid: item.bilibiliMetadata.bvid },
 					})
@@ -132,20 +132,14 @@ export function useSearchInteractions() {
 					if (!item.artist?.remoteId) {
 						return
 					}
-					router.push({
+					router.navigate({
 						pathname: '/playlist/remote/uploader/[mid]',
 						params: { mid: item.artist?.remoteId },
 					})
 				},
 			},
 		],
-		[
-			router,
-			openModal,
-			playTrack,
-			personalInformation?.mid,
-			addToDefaultFavorite,
-		],
+		[router, openModal, playTrack, personalInformation, addToDefaultFavorite],
 	)
 
 	return {

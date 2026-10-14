@@ -1,7 +1,7 @@
+import { BootSplashVideoView } from '@bbplayer/native'
 import { Image } from 'expo-image'
-import { useVideoPlayer, VideoView } from 'expo-video'
 import { memo, useEffect, useState } from 'react'
-import { AppState, StyleSheet, useWindowDimensions } from 'react-native'
+import { StyleSheet, useColorScheme, useWindowDimensions } from 'react-native'
 import { useHideAnimation, type Manifest } from 'react-native-bootsplash'
 import Animated, {
 	Easing,
@@ -18,6 +18,10 @@ import { storage } from '@/utils/mmkv'
 
 const bootSplashManifest =
 	require('../../assets/bootsplash/manifest.json') as Manifest
+const bootSplashColors = require('../../boot-splash-colors.json') as {
+	light: string
+	dark: string
+}
 
 const logoSource = require('../../assets/bootsplash/logo.png') as number
 
@@ -29,6 +33,7 @@ const AnimatedBootSplash = memo(function AnimatedBootSplash({
 	ready,
 }: AnimatedBootSplashProps) {
 	const { height, width } = useWindowDimensions()
+	const isDarkMode = useColorScheme() === 'dark'
 	const insets = useSafeAreaInsets()
 	const activeSkin = useActiveSkin()
 	const selectedAssetId = useSkinStore(
@@ -64,44 +69,15 @@ const AnimatedBootSplash = memo(function AnimatedBootSplash({
 	const [visible, setVisible] = useState(true)
 	const [introFinished, setIntroFinished] = useState(false)
 	const [videoEnded, setVideoEnded] = useState(false)
+	const [videoPlaybackRequested, setVideoPlaybackRequested] = useState(false)
 	const logoTranslateY = useSharedValue(0)
 	const logoScale = useSharedValue(1)
 	const mediaOpacity = useSharedValue(0)
 	const containerOpacity = useSharedValue(1)
 
-	const player = useVideoPlayer(bootSplashVideo ?? null, (video) => {
-		video.loop = false
-		video.muted = true
-	})
-
 	useEffect(() => {
 		setVideoEnded(!bootSplashVideo)
 	}, [bootSplashVideo])
-
-	useEffect(() => {
-		if (!bootSplashVideo) return
-
-		const subscription = player.addListener('playToEnd', () => {
-			setVideoEnded(true)
-		})
-		return () => subscription.remove()
-	}, [bootSplashVideo, player])
-
-	// 后台切回前台时 TextureView 可能被销毁，视频停在当前位置，
-	// playToEnd 不会再触发 → 卡死。重播一次让视频走完。
-	useEffect(() => {
-		const subscription = AppState.addEventListener('change', (nextState) => {
-			if (
-				nextState === 'active' &&
-				playFullAnimation &&
-				bootSplashVideo &&
-				!videoEnded
-			) {
-				player.play()
-			}
-		})
-		return () => subscription.remove()
-	}, [playFullAnimation, bootSplashVideo, videoEnded, player])
 
 	// 安全兜底：即使视频卡住，最多等 3s 也强制淡出
 	useEffect(() => {
@@ -115,27 +91,32 @@ const AnimatedBootSplash = memo(function AnimatedBootSplash({
 		logo: logoSource,
 		ready: true,
 		animate: () => {
-			logoTranslateY.value = withTiming(height / 2 - insets.bottom - 41, {
-				duration: 620,
-				easing: Easing.out(Easing.cubic),
-			})
-			logoScale.value = withTiming(
-				0.48,
-				{
+			logoTranslateY.set(
+				withTiming(height / 2 - insets.bottom - 41, {
 					duration: 620,
 					easing: Easing.out(Easing.cubic),
-				},
-				(finished) => {
-					if (finished) scheduleOnRN(setIntroFinished, true)
-				},
+				}),
 			)
-			mediaOpacity.value = withTiming(1, {
-				duration: 420,
-				easing: Easing.out(Easing.quad),
-			})
-
+			logoScale.set(
+				withTiming(
+					0.48,
+					{
+						duration: 620,
+						easing: Easing.out(Easing.cubic),
+					},
+					(finished) => {
+						if (finished) scheduleOnRN(setIntroFinished, true)
+					},
+				),
+			)
+			mediaOpacity.set(
+				withTiming(1, {
+					duration: 420,
+					easing: Easing.out(Easing.quad),
+				}),
+			)
 			if (bootSplashVideo) {
-				player.replay()
+				scheduleOnRN(setVideoPlaybackRequested, true)
 			}
 		},
 	})
@@ -144,9 +125,11 @@ const AnimatedBootSplash = memo(function AnimatedBootSplash({
 		if (!ready || !introFinished) return
 		if (playFullAnimation && bootSplashVideo && !videoEnded) return
 
-		containerOpacity.value = withTiming(0, { duration: 280 }, (finished) => {
-			if (finished) scheduleOnRN(setVisible, false)
-		})
+		containerOpacity.set(
+			withTiming(0, { duration: 280 }, (finished) => {
+				if (finished) scheduleOnRN(setVisible, false)
+			}),
+		)
 	}, [
 		bootSplashVideo,
 		containerOpacity,
@@ -177,7 +160,12 @@ const AnimatedBootSplash = memo(function AnimatedBootSplash({
 		<Animated.View
 			pointerEvents='none'
 			{...container}
-			style={[container.style, styles.container, containerStyle]}
+			style={[
+				container.style,
+				styles.container,
+				isDarkMode && styles.containerDark,
+				containerStyle,
+			]}
 		>
 			<Animated.View style={[styles.mediaContainer, mediaStyle]}>
 				{bootSplashAssetCard ? (
@@ -189,8 +177,8 @@ const AnimatedBootSplash = memo(function AnimatedBootSplash({
 					/>
 				) : null}
 				{bootSplashVideo ? (
-					<VideoView
-						player={player}
+					<BootSplashVideoView
+						sourceUri={bootSplashVideo}
 						style={[
 							styles.video,
 							{
@@ -199,8 +187,10 @@ const AnimatedBootSplash = memo(function AnimatedBootSplash({
 							},
 						]}
 						contentFit='cover'
-						nativeControls={false}
-						surfaceType='textureView'
+						autoPlay={videoPlaybackRequested}
+						muted
+						onPlaybackEnd={() => setVideoEnded(true)}
+						onPlaybackError={() => setVideoEnded(true)}
 					/>
 				) : null}
 			</Animated.View>
@@ -215,10 +205,13 @@ const AnimatedBootSplash = memo(function AnimatedBootSplash({
 const styles = StyleSheet.create({
 	container: {
 		...StyleSheet.absoluteFill,
+		backgroundColor: bootSplashColors.light,
 		zIndex: 9999,
 		alignItems: 'center',
 		justifyContent: 'center',
-		backgroundColor: '#FFFFFF',
+	},
+	containerDark: {
+		backgroundColor: bootSplashColors.dark,
 	},
 	mediaContainer: {
 		...StyleSheet.absoluteFill,

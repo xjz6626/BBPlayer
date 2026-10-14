@@ -6,7 +6,14 @@ import { useLiveQuery } from 'drizzle-orm/expo-sqlite'
 import { useImage } from 'expo-image'
 import { useObserve } from 'expo-observe'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import {
+	useCallback,
+	useDeferredValue,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react'
 import { StyleSheet, View } from 'react-native'
 import { Appbar, MD3Theme, Text, useTheme } from 'react-native-paper'
 import { Searchbar as SearchBar } from 'react-native-paper'
@@ -17,13 +24,14 @@ import Animated, {
 } from 'react-native-reanimated'
 
 import ActivityIndicator from '@/components/common/ActivityIndicator'
-import FunctionalMenu from '@/components/common/FunctionalMenu'
+import { MenuView } from '@/components/common/FunctionalMenu'
+import IconButton from '@/components/common/IconButton'
 import { alert } from '@/components/modals/AlertModal'
-import NowPlayingBar from '@/components/NowPlayingBar'
 import { PlaylistHeader } from '@/features/playlist/local/components/LocalPlaylistHeader'
 import { TrackListItem } from '@/features/playlist/local/components/LocalPlaylistItem'
 import { LocalTrackList } from '@/features/playlist/local/components/LocalTrackList'
 import { PlaylistError } from '@/features/playlist/local/components/PlaylistError'
+import { PlaylistPlayerPreferenceDialog } from '@/features/playlist/local/components/PlaylistPlayerPreferenceDialog'
 import { SharedPlaylistMembersSheet } from '@/features/playlist/local/components/SharedPlaylistMembersSheet'
 import { SyncFailuresSheet } from '@/features/playlist/local/components/SyncFailuresSheet'
 import { useLocalPlaylistMenu } from '@/features/playlist/local/hooks/useLocalPlaylistMenu'
@@ -38,7 +46,9 @@ import {
 	usePlaylistSync,
 	useReorderLocalPlaylistTrack,
 } from '@/hooks/mutations/db/playlist'
+import useCurrentTrack from '@/hooks/player/useCurrentTrack'
 import {
+	useAllPlaylistsContainingTrack,
 	usePlaylistContentsInfinite,
 	usePlaylistMetadata,
 	useSearchTracksInPlaylist,
@@ -46,14 +56,17 @@ import {
 import { useBatchDownloadStatus } from '@/hooks/queries/orpheus'
 import { useSharedPlaylistMembers } from '@/hooks/queries/sharedPlaylistMembers'
 import usePreventRemove from '@/hooks/router/usePreventRemove'
+import { useScreenTransitionReady } from '@/hooks/router/useScreenTransitionReady'
 import useAppStore from '@/hooks/stores/useAppStore'
 import { useModalStore } from '@/hooks/stores/useModalStore'
 import { useDoubleTapScrollToTop } from '@/hooks/ui/useDoubleTapScrollToTop'
+import { type MenuBuilder, useMenuActions } from '@/hooks/ui/useMenuActions'
 import { usePlaylistBackgroundColor } from '@/hooks/ui/usePlaylistBackgroundColor'
 import { useIsActuallyOffline } from '@/hooks/utils/useIsActuallyOffline'
 import db from '@/lib/db/db'
 import * as schema from '@/lib/db/schema'
 import { CustomError } from '@/lib/errors'
+import { playlistService } from '@/lib/services/playlistService'
 import type { Track } from '@/types/core/media'
 import { toastAndLogError } from '@/utils/error-handling'
 import * as Haptics from '@/utils/haptics'
@@ -101,6 +114,11 @@ const UNPIN_ICON = Icon.select({
 	android: import('@expo/material-symbols/keep_off.xml'),
 })
 
+const PREFERRED_ICON = Icon.select({
+	ios: 'headphones',
+	android: import('@expo/material-symbols/headphones.xml'),
+})
+
 const SEARCHBAR_HEIGHT = 72
 const SCOPE = 'UI.Playlist.Local'
 
@@ -110,6 +128,13 @@ const SELECT_MODE_ITEM_HEIGHT = 69
 const EDGE_ZONE = 80
 /** px scrolled per auto-scroll tick (~16 ms) */
 const SCROLL_SPEED = 8
+
+type PlaylistContentsData = NonNullable<
+	ReturnType<typeof usePlaylistContentsInfinite>['data']
+>
+type PlaylistMetadata = NonNullable<
+	ReturnType<typeof usePlaylistMetadata>['data']
+>
 
 const deletePlaylistDialogPrompt = (
 	playlistMetadata: ReturnType<typeof usePlaylistMetadata>['data'],
@@ -150,15 +175,84 @@ const deletePlaylistDialogPrompt = (
 }
 
 export default function LocalPlaylistPage() {
+	const isListReady = useScreenTransitionReady()
 	const { id } = useLocalSearchParams<{ id: string }>()
-	const theme = useTheme()
-	const { colors } = theme
-	const router = useRouter()
 	const { markInteractive } = useObserve()
+	const router = useRouter()
 
 	useEffect(() => {
 		markInteractive()
 	}, [markInteractive])
+	const {
+		data: playlistData,
+		isPending: isPlaylistDataPending,
+		isError: isPlaylistDataError,
+		fetchNextPage: fetchNextPagePlaylistData,
+		hasNextPage: hasNextPagePlaylistData,
+		isFetchingNextPage: isFetchingNextPagePlaylistData,
+	} = usePlaylistContentsInfinite(Number(id), 30, 15)
+	const {
+		data: playlistMetadata,
+		isPending: isPlaylistMetadataPending,
+		isError: isPlaylistMetadataError,
+	} = usePlaylistMetadata(Number(id))
+
+	// 歌单可能在打开后被删除（本地删除或远端删除），此时查询会返回 null。
+	// 自动退出该页面，避免停留在无效页面，也不要把这种情况当作错误上报
+	const isPlaylistNotFound =
+		!isPlaylistMetadataPending &&
+		!isPlaylistMetadataError &&
+		playlistMetadata === null
+
+	useEffect(() => {
+		if (!isPlaylistNotFound) return
+		toast.error('播放列表不存在或已被删除')
+		if (router.canGoBack()) router.back()
+		else router.replace('/(tabs)')
+	}, [isPlaylistNotFound, router])
+
+	if (typeof id !== 'string') return null
+	if (isPlaylistDataPending || isPlaylistMetadataPending || !isListReady)
+		return <PlaylistPageSkeleton animate={isListReady} />
+	if (isPlaylistDataError || isPlaylistMetadataError)
+		return <PlaylistError text='加载播放列表内容失败' />
+	if (!playlistData || !playlistMetadata)
+		return <PlaylistError text='播放列表不存在或已被删除' />
+
+	return (
+		<LocalPlaylistContent
+			id={id}
+			playlistData={playlistData}
+			fetchNextPagePlaylistData={fetchNextPagePlaylistData}
+			hasNextPagePlaylistData={hasNextPagePlaylistData}
+			isFetchingNextPagePlaylistData={isFetchingNextPagePlaylistData}
+			playlistMetadata={playlistMetadata}
+		/>
+	)
+}
+
+function LocalPlaylistContent({
+	id,
+	playlistData,
+	fetchNextPagePlaylistData,
+	hasNextPagePlaylistData,
+	isFetchingNextPagePlaylistData,
+	playlistMetadata,
+}: {
+	id: string
+	playlistData: PlaylistContentsData
+	fetchNextPagePlaylistData: ReturnType<
+		typeof usePlaylistContentsInfinite
+	>['fetchNextPage']
+	hasNextPagePlaylistData: boolean
+	isFetchingNextPagePlaylistData: boolean
+	playlistMetadata: PlaylistMetadata
+}) {
+	const theme = useTheme()
+	const { colors } = theme
+	const [playerPreferenceVisible, setPlayerPreferenceVisible] = useState(false)
+	const [isResolvingSelection, setIsResolvingSelection] = useState(false)
+	const router = useRouter()
 	const bbplayerToken = useAppStore((state) => state.bbplayerToken)
 	const [searchQuery, setSearchQuery] = useState('')
 	const [startSearch, setStartSearch] = useState(false)
@@ -174,8 +268,20 @@ export default function LocalPlaylistPage() {
 	} = useTrackSelection()
 
 	const { listRef, handleDoubleTap } = useDoubleTapScrollToTop()
+	const currentTrack = useCurrentTrack()
 	const membersSheetRef = useRef<TrueSheet>(null)
 	const syncFailuresSheetRef = useRef<TrueSheet>(null)
+	const [membersSheetMounted, setMembersSheetMounted] = useState(false)
+	const [syncFailuresSheetMounted, setSyncFailuresSheetMounted] =
+		useState(false)
+	const setMembersSheetRef = useCallback((sheet: TrueSheet | null) => {
+		membersSheetRef.current = sheet
+		if (sheet) void sheet.present()
+	}, [])
+	const setSyncFailuresSheetRef = useCallback((sheet: TrueSheet | null) => {
+		syncFailuresSheetRef.current = sheet
+		if (sheet) void sheet.present()
+	}, [])
 
 	const selection = {
 		active: selectMode,
@@ -185,14 +291,8 @@ export default function LocalPlaylistPage() {
 	}
 	const openModal = useModalStore((state) => state.open)
 
-	const {
-		data: playlistData,
-		isPending: isPlaylistDataPending,
-		isError: isPlaylistDataError,
-		fetchNextPage: fetchNextPagePlaylistData,
-		hasNextPage: hasNextPagePlaylistData,
-		isFetchingNextPage: isFetchingNextPagePlaylistData,
-	} = usePlaylistContentsInfinite(Number(id), 30, 15)
+	const { data: playlistsContainingCurrentTrack } =
+		useAllPlaylistsContainingTrack(currentTrack?.uniqueKey)
 	const allLoadedTracks =
 		(
 			playlistData?.pages as Array<{
@@ -247,25 +347,6 @@ export default function LocalPlaylistPage() {
 		return keys
 	})()
 
-	const batchAddTracksModalPayloads = (() => {
-		const trackMap = new Map<number, Track>(
-			allLoadedTracks.map((t) => [t.id, t]),
-		)
-		const payloads = []
-		for (const trackId of selected) {
-			const track = trackMap.get(trackId)
-			if (!track) continue
-			payloads.push({
-				track: {
-					...track,
-					artistId: track.artist?.id,
-				},
-				artist: track.artist!,
-			})
-		}
-		return payloads
-	})()
-
 	const {
 		data: searchData,
 		isError: isSearchError,
@@ -284,12 +365,80 @@ export default function LocalPlaylistPage() {
 
 		return searchData ?? []
 	})()
+	const currentTrackKey = currentTrack?.uniqueKey
+	const currentTrackIndex = useMemo(
+		() =>
+			currentTrackKey
+				? finalPlaylistData.findIndex(
+						(track) => track.uniqueKey === currentTrackKey,
+					)
+				: -1,
+		[finalPlaylistData, currentTrackKey],
+	)
+	const [visibleTrackKeys, setVisibleTrackKeys] = useState<string[]>([])
+	const [isLocatingCurrentTrack, setIsLocatingCurrentTrack] = useState(false)
+	const lastCurrentTrackLookupPageCountRef = useRef<number | null>(null)
 
-	const {
-		data: playlistMetadata,
-		isPending: isPlaylistMetadataPending,
-		isError: isPlaylistMetadataError,
-	} = usePlaylistMetadata(Number(id))
+	const isCurrentTrackInPlaylist = playlistsContainingCurrentTrack?.some(
+		(playlist) => playlist.id === Number(id),
+	)
+	const isCurrentTrackVisible =
+		!currentTrackKey || visibleTrackKeys.includes(currentTrackKey)
+
+	const handleViewableItemsChanged = useCallback(
+		({ viewableItems }: { viewableItems: { item: Track }[] }) => {
+			setVisibleTrackKeys(viewableItems.map(({ item }) => item.uniqueKey))
+		},
+		[],
+	)
+
+	const locateCurrentTrack = useCallback(() => {
+		lastCurrentTrackLookupPageCountRef.current = null
+		setIsLocatingCurrentTrack(true)
+	}, [])
+
+	useEffect(() => {
+		if (!isLocatingCurrentTrack || !currentTrackKey) return
+
+		if (currentTrackIndex !== -1) {
+			void listRef.current?.scrollToIndex({
+				index: currentTrackIndex,
+				animated: true,
+				viewPosition: 0.5,
+			})
+			setVisibleTrackKeys((keys) =>
+				keys.includes(currentTrackKey) ? keys : [...keys, currentTrackKey],
+			)
+			setIsLocatingCurrentTrack(false)
+			return
+		}
+
+		if (hasNextPagePlaylistData && !isFetchingNextPagePlaylistData) {
+			const loadedPageCount = playlistData?.pages.length ?? 0
+			if (lastCurrentTrackLookupPageCountRef.current === loadedPageCount) {
+				setIsLocatingCurrentTrack(false)
+				return
+			}
+			lastCurrentTrackLookupPageCountRef.current = loadedPageCount
+			void fetchNextPagePlaylistData().catch(() => {
+				setIsLocatingCurrentTrack(false)
+			})
+			return
+		}
+
+		if (!hasNextPagePlaylistData) {
+			setIsLocatingCurrentTrack(false)
+		}
+	}, [
+		currentTrackIndex,
+		currentTrackKey,
+		fetchNextPagePlaylistData,
+		hasNextPagePlaylistData,
+		isFetchingNextPagePlaylistData,
+		isLocatingCurrentTrack,
+		listRef,
+		playlistData?.pages.length,
+	])
 
 	const shareMembers = useSharedPlaylistMembers(playlistMetadata?.shareId)
 	const isSharedSubscriber = playlistMetadata?.shareRole === 'subscriber'
@@ -303,7 +452,6 @@ export default function LocalPlaylistPage() {
 
 	const {
 		backgroundColor,
-		nowPlayingBarColor,
 		primaryButtonColor,
 		primaryButtonTextColor,
 		secondaryButtonContainerColor,
@@ -319,13 +467,29 @@ export default function LocalPlaylistPage() {
 	const { mutate: pullSharedPlaylist, isPending: isPullingShared } =
 		usePullSharedPlaylist()
 
+	const presentMembersSheet = useCallback(() => {
+		if (membersSheetRef.current) {
+			void membersSheetRef.current.present()
+			return
+		}
+		setMembersSheetMounted(true)
+	}, [])
+
+	const presentSyncFailuresSheet = useCallback(() => {
+		if (syncFailuresSheetRef.current) {
+			void syncFailuresSheetRef.current.present()
+			return
+		}
+		setSyncFailuresSheetMounted(true)
+	}, [])
+
 	const handlePressShareMember = () => {
 		if (isSharedLoggedOut) {
 			toast.error('登陆 BBPlayer 账号后才能查看共享成员')
 			return
 		}
 		if (playlistMetadata?.shareId) {
-			void membersSheetRef.current?.present()
+			presentMembersSheet()
 		}
 	}
 
@@ -353,10 +517,23 @@ export default function LocalPlaylistPage() {
 				return
 			}
 			openModal(
-				'FavoriteSyncProgress',
+				'PlaylistSyncProgress',
 				{
-					favoriteId: playlistMetadata.remoteSyncId,
+					remoteId: playlistMetadata.remoteSyncId,
+					type: 'favorite',
 					expandMultiPage: expandMultiPageOnSync,
+				},
+				{ dismissible: false },
+			)
+			return
+		}
+
+		if (playlistMetadata.type === 'series') {
+			openModal(
+				'PlaylistSyncProgress',
+				{
+					remoteId: playlistMetadata.remoteSyncId,
+					type: 'series',
 				},
 				{ dismissible: false },
 			)
@@ -399,7 +576,7 @@ export default function LocalPlaylistPage() {
 		openAddToPlaylistModal: (track) =>
 			openModal('UpdateTrackLocalPlaylists', { track }),
 		openEditTrackModal: (track) => openModal('EditTrackMetadata', { track }),
-		playlist: playlistMetadata!,
+		playlist: playlistMetadata,
 		isReadOnly: isSharedSubscriber,
 	})
 
@@ -410,6 +587,102 @@ export default function LocalPlaylistPage() {
 			playlistId: Number(id),
 		})
 		exitSelectMode()
+	}
+
+	const clearInvalidVideos = async () => {
+		const tracksResult = await playlistService.getPlaylistTracks(Number(id))
+		if (tracksResult.isErr()) {
+			toastAndLogError('获取播放列表歌曲失败', tracksResult.error, SCOPE)
+			return
+		}
+
+		const invalidTrackIds = tracksResult.value
+			.filter(
+				(track) =>
+					track.source === 'bilibili' && !track.bilibiliMetadata.videoIsValid,
+			)
+			.map((track) => track.id)
+		if (invalidTrackIds.length === 0) {
+			toast.info('没有需要清除的失效视频')
+			return
+		}
+
+		deleteTrackFromLocalPlaylist({
+			trackIds: invalidTrackIds,
+			playlistId: Number(id),
+		})
+	}
+
+	const getSelectionScopeTracks = async () => {
+		const tracksResult =
+			startSearch && deferredQuery.trim()
+				? await playlistService.searchTrackInPlaylist(Number(id), deferredQuery)
+				: await playlistService.getPlaylistTracks(Number(id))
+		if (tracksResult.isErr()) {
+			toastAndLogError('获取播放列表歌曲失败', tracksResult.error, SCOPE)
+			return null
+		}
+		return tracksResult.value
+	}
+
+	const selectAllTracks = async () => {
+		setIsResolvingSelection(true)
+		try {
+			const tracks = await getSelectionScopeTracks()
+			if (!tracks) {
+				setIsResolvingSelection(false)
+				return
+			}
+			setSelected(new Set(tracks.map((track) => track.id)))
+			setIsResolvingSelection(false)
+		} catch {
+			setIsResolvingSelection(false)
+		}
+	}
+
+	const invertSelectedTracks = async () => {
+		setIsResolvingSelection(true)
+		try {
+			const tracks = await getSelectionScopeTracks()
+			if (!tracks) {
+				setIsResolvingSelection(false)
+				return
+			}
+			setSelected(
+				new Set(
+					tracks
+						.filter((track) => !selected.has(track.id))
+						.map((track) => track.id),
+				),
+			)
+			setIsResolvingSelection(false)
+		} catch {
+			setIsResolvingSelection(false)
+		}
+	}
+
+	const openBatchAddTracksModal = async () => {
+		setIsResolvingSelection(true)
+		try {
+			const tracksResult = await playlistService.getPlaylistTracks(Number(id))
+			if (tracksResult.isErr()) {
+				toastAndLogError('获取播放列表歌曲失败', tracksResult.error, SCOPE)
+				setIsResolvingSelection(false)
+				return
+			}
+			const selectedTracks = tracksResult.value.filter((track) =>
+				selected.has(track.id),
+			)
+			openModal('BatchAddTracksToLocalPlaylist', {
+				payloads: selectedTracks.map((track) => ({
+					track: { ...track, artistId: track.artist?.id },
+					artist: track.artist!,
+				})),
+			})
+			setIsResolvingSelection(false)
+		} catch {
+			setIsResolvingSelection(false)
+		}
 	}
 
 	/** 防止重复处理共享歌单被删除的场景 */
@@ -515,17 +788,17 @@ export default function LocalPlaylistPage() {
 	/** Auto-scroll interval handle */
 	const autoScrollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-	const stopAutoScroll = () => {
+	const stopAutoScroll = useCallback(() => {
 		if (autoScrollRef.current !== null) {
 			clearInterval(autoScrollRef.current)
 			autoScrollRef.current = null
 		}
-	}
+	}, [autoScrollRef])
 
 	// 组件卸载时清理自动滚动定时器
 	useEffect(() => {
 		return () => stopAutoScroll()
-	}, [])
+	}, [stopAutoScroll])
 
 	const startAutoScroll = (direction: 'up' | 'down') => {
 		stopAutoScroll()
@@ -658,105 +931,137 @@ export default function LocalPlaylistPage() {
 	const draggedTrack =
 		dragging !== null ? finalPlaylistData[dragging.trackIndex] : null
 
-	if (typeof id !== 'string') return null
-	if (isPlaylistDataPending || isPlaylistMetadataPending)
-		return <PlaylistPageSkeleton />
-	if (isPlaylistDataError || isPlaylistMetadataError)
-		return <PlaylistError text='加载播放列表内容失败' />
-	if (!playlistMetadata) return <PlaylistError text='未找到播放列表元数据' />
+	const menuActions = useMenuActions(addPlaylistMenuItems)
 
-	const playlistActionsMenu = (
-		<FunctionalMenu anchor={<Appbar.Action icon='dots-vertical' />}>
-			{playlistMetadata.type === 'local' && !isSharedSubscriber && (
-				<FunctionalMenu.Item
-					onPress={() => {
-						enterSelectMode()
-					}}
-					title='排序'
-					leadingIcon={SORT_ICON}
-				/>
-			)}
-			{!isSharedSubscriber && (
-				<FunctionalMenu.Item
-					onPress={() => {
-						openModal('EditPlaylistMetadata', {
-							playlist: playlistMetadata,
-						})
-					}}
-					title='编辑播放列表信息'
-					leadingIcon={EDIT_ICON}
-				/>
-			)}
-			{playlistMetadata.type === 'local' &&
-				playlistMetadata.remoteSyncId === null &&
-				!isSharedSubscriber && (
-					<FunctionalMenu.Item
-						onPress={() => {
-							openModal(
-								'SyncLocalToBilibili',
-								{ playlistId: Number(id) },
-								{ dismissible: false },
-							)
-						}}
-						title='同步到 B 站'
-						leadingIcon={SYNC_ICON}
-					/>
-				)}
-			{playlistMetadata.type === 'local' && !playlistMetadata.shareId && (
-				<FunctionalMenu.Item
-					onPress={() => {
-						openModal('EnableSharing', { playlistId: Number(id) })
-					}}
-					title='设为共享歌单'
-					leadingIcon={SHARE_ICON}
-				/>
-			)}
-			{playlistMetadata.shareId && (
-				<FunctionalMenu.Item
-					onPress={() => {
-						openModal('EnableSharing', {
-							playlistId: Number(id),
-							shareId: playlistMetadata.shareId,
-							shareRole: playlistMetadata.shareRole,
-						})
-					}}
-					title='共享设置'
-					leadingIcon={LINK_ICON}
-				/>
-			)}
-			<FunctionalMenu.Item
-				onPress={() => {
-					editPlaylistMetadata({
-						playlistId: Number(id),
-						payload: {
-							isPinned: !playlistMetadata.isPinned,
-						},
-					})
-				}}
-				title={playlistMetadata.isPinned ? '取消置顶' : '置顶'}
-				leadingIcon={playlistMetadata.isPinned ? UNPIN_ICON : PIN_ICON}
-			/>
-			<FunctionalMenu.Item
-				onPress={() => {
+	function addPlaylistMenuItems(menu: MenuBuilder) {
+		const isLocal = playlistMetadata.type === 'local'
+
+		menu.add({
+			title: '播放器偏好',
+			image: PREFERRED_ICON,
+			onPress: () => setPlayerPreferenceVisible(true),
+		})
+
+		if (isLocal && !isSharedSubscriber) {
+			menu.add({
+				title: '排序',
+				image: SORT_ICON,
+				onPress: enterSelectMode,
+			})
+		}
+
+		if (!isSharedSubscriber) {
+			menu.add({
+				title: '编辑播放列表信息',
+				image: EDIT_ICON,
+				onPress: () => {
+					openModal('EditPlaylistMetadata', { playlist: playlistMetadata })
+				},
+			})
+		}
+
+		if (
+			isLocal &&
+			playlistMetadata.validTrackCount < playlistMetadata.itemCount &&
+			!isSharedSubscriber
+		) {
+			menu.add({
+				title: '清除失效视频',
+				image: DELETE_ICON,
+				attributes: { destructive: true },
+				onPress: () => {
 					alert(
-						'删除播放列表',
-						deletePlaylistDialogPrompt(playlistMetadata, colors),
+						'清除失效视频',
+						'确定从播放列表移除所有失效视频？',
 						[
 							{ text: '取消' },
-							{ text: '确定', onPress: onClickDeletePlaylist },
+							{ text: '确定', onPress: () => void clearInvalidVideos() },
 						],
 						{ cancelable: true },
 					)
-				}}
-				title='删除播放列表'
-				leadingIcon={DELETE_ICON}
-				titleStyle={{ color: colors.error }}
-			/>
-		</FunctionalMenu>
-	)
+				},
+			})
+		}
+
+		if (
+			isLocal &&
+			playlistMetadata.remoteSyncId === null &&
+			!isSharedSubscriber
+		) {
+			menu.add({
+				title: '同步到 B 站',
+				image: SYNC_ICON,
+				onPress: () => {
+					openModal(
+						'SyncLocalToBilibili',
+						{ playlistId: playlistMetadata.id },
+						{ dismissible: false },
+					)
+				},
+			})
+		}
+
+		if (isLocal && !playlistMetadata.shareId) {
+			menu.add({
+				title: '设为共享歌单',
+				image: SHARE_ICON,
+				onPress: () => {
+					openModal('EnableSharing', { playlistId: playlistMetadata.id })
+				},
+			})
+		}
+
+		const shareId = playlistMetadata.shareId
+
+		if (shareId) {
+			menu.add({
+				title: '共享设置',
+				image: LINK_ICON,
+				onPress: () => {
+					openModal('EnableSharing', {
+						playlistId: playlistMetadata.id,
+						shareId,
+						shareRole: playlistMetadata.shareRole,
+					})
+				},
+			})
+		}
+
+		menu.add({
+			title: playlistMetadata.isPinned ? '取消置顶' : '置顶',
+			image: playlistMetadata.isPinned ? UNPIN_ICON : PIN_ICON,
+			onPress: () => {
+				editPlaylistMetadata({
+					playlistId: playlistMetadata.id,
+					payload: {
+						isPinned: !playlistMetadata.isPinned,
+					},
+				})
+			},
+		})
+
+		menu.add({
+			title: '删除播放列表',
+			image: DELETE_ICON,
+			attributes: { destructive: true },
+			onPress: () => {
+				alert(
+					'删除播放列表',
+					deletePlaylistDialogPrompt(playlistMetadata, colors),
+					[{ text: '取消' }, { text: '确定', onPress: onClickDeletePlaylist }],
+					{ cancelable: true },
+				)
+			},
+		})
+	}
 
 	return (
 		<View style={[styles.container, { backgroundColor }]}>
+			<PlaylistPlayerPreferenceDialog
+				playlist={playlistMetadata}
+				visible={playerPreferenceVisible}
+				onDismiss={() => setPlayerPreferenceVisible(false)}
+			/>
 			<Appbar.Header
 				elevated
 				style={{ backgroundColor: 'transparent' }}
@@ -774,21 +1079,13 @@ export default function LocalPlaylistPage() {
 					<>
 						<Appbar.Action
 							icon='select-all'
-							onPress={() =>
-								setSelected(new Set(finalPlaylistData.map((t) => t.id)))
-							}
+							disabled={isResolvingSelection}
+							onPress={() => void selectAllTracks()}
 						/>
 						<Appbar.Action
 							icon='select-compare'
-							onPress={() =>
-								setSelected(
-									new Set(
-										finalPlaylistData
-											.filter((t) => !selected.has(t.id))
-											.map((t) => t.id),
-									),
-								)
-							}
+							disabled={isResolvingSelection}
+							onPress={() => void invertSelectedTracks()}
 						/>
 						{playlistMetadata.type === 'local' && (
 							<Appbar.Action
@@ -808,11 +1105,8 @@ export default function LocalPlaylistPage() {
 						)}
 						<Appbar.Action
 							icon='playlist-plus'
-							onPress={() =>
-								openModal('BatchAddTracksToLocalPlaylist', {
-									payloads: batchAddTracksModalPayloads,
-								})
-							}
+							disabled={isResolvingSelection}
+							onPress={() => void openBatchAddTracksModal()}
 						/>
 					</>
 				) : (
@@ -821,9 +1115,7 @@ export default function LocalPlaylistPage() {
 							<Appbar.Action
 								icon='alert-circle'
 								color={colors.error}
-								onPress={() => {
-									void syncFailuresSheetRef.current?.present()
-								}}
+								onPress={presentSyncFailuresSheet}
 								accessibilityLabel='同步失败'
 							/>
 						)}
@@ -837,7 +1129,9 @@ export default function LocalPlaylistPage() {
 							icon={startSearch ? 'close' : 'magnify'}
 							onPress={() => setStartSearch((prev) => !prev)}
 						/>
-						{playlistActionsMenu}
+						<MenuView {...menuActions}>
+							<Appbar.Action icon='dots-vertical' />
+						</MenuView>
 					</>
 				)}
 			</Appbar.Header>
@@ -906,6 +1200,8 @@ export default function LocalPlaylistPage() {
 							: undefined
 					}
 					insertAfterIndex={dragging !== null ? insertAfterIndex : null}
+					onViewableItemsChanged={handleViewableItemsChanged}
+					viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
 					onScroll={(e) => {
 						scrollOffsetRef.current = e.nativeEvent.contentOffset.y
 					}}
@@ -925,7 +1221,7 @@ export default function LocalPlaylistPage() {
 								}
 								onPressAuthor={(author) =>
 									author.remoteId &&
-									router.push({
+									router.navigate({
 										pathname: '/playlist/remote/uploader/[mid]',
 										params: { mid: author.remoteId },
 									})
@@ -956,6 +1252,19 @@ export default function LocalPlaylistPage() {
 						</>
 					}
 				/>
+				{isCurrentTrackInPlaylist && !startSearch && !isCurrentTrackVisible && (
+					<View style={styles.locateCurrentTrackButton}>
+						<IconButton
+							icon='crosshairs-gps'
+							mode='contained'
+							size={32}
+							loading={isLocatingCurrentTrack}
+							onPress={locateCurrentTrack}
+							accessibilityLabel='定位到正在播放的歌曲'
+							testID='local-playlist-scroll-to-current'
+						/>
+					</View>
+				)}
 
 				{dragging !== null && draggedTrack && (
 					<Animated.View
@@ -979,18 +1288,18 @@ export default function LocalPlaylistPage() {
 				)}
 			</View>
 
-			<View style={styles.nowPlayingBarContainer}>
-				<NowPlayingBar backgroundColor={nowPlayingBarColor} />
-			</View>
-
-			<SharedPlaylistMembersSheet
-				ref={membersSheetRef}
-				shareId={playlistMetadata?.shareId}
-			/>
-			<SyncFailuresSheet
-				ref={syncFailuresSheetRef}
-				playlistId={playlistMetadata?.id}
-			/>
+			{membersSheetMounted && (
+				<SharedPlaylistMembersSheet
+					ref={setMembersSheetRef}
+					shareId={playlistMetadata.shareId}
+				/>
+			)}
+			{syncFailuresSheetMounted && (
+				<SyncFailuresSheet
+					ref={setSyncFailuresSheetRef}
+					playlistId={playlistMetadata.id}
+				/>
+			)}
 		</View>
 	)
 }
@@ -998,11 +1307,10 @@ export default function LocalPlaylistPage() {
 const styles = StyleSheet.create({
 	container: { flex: 1 },
 	searchbarContainer: { overflow: 'hidden' },
-	nowPlayingBarContainer: {
+	locateCurrentTrackButton: {
 		position: 'absolute',
-		bottom: 0,
-		left: 0,
-		right: 0,
+		right: 16,
+		bottom: 86,
 	},
 	ghostContainer: {
 		position: 'absolute',

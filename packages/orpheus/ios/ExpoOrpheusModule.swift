@@ -50,6 +50,10 @@ public class ExpoOrpheusModule: Module {
         manager.onIsPlayingChanged = { [weak self] isPlaying in
             self?.sendEvent("onIsPlayingChanged", ["status": isPlaying])
         }
+
+        manager.onQueueChanged = { [weak self] in
+            self?.sendEvent("onQueueChanged", [:])
+        }
     }
 
     public func definition() -> ModuleDefinition {
@@ -63,9 +67,12 @@ public class ExpoOrpheusModule: Module {
             "onIsPlayingChanged",
             "onDownloadUpdated",
             "onPlaybackSpeedChanged",
+            "onSpectrumVisualizerError",
+            "onSpectrumVisualizerEnabledChanged",
             "onHeadlessEvent",
             "onTrackStarted",
-            "onTrackFinished"
+            "onTrackFinished",
+            "onQueueChanged"
         )
 
         OnCreate {
@@ -86,6 +93,13 @@ public class ExpoOrpheusModule: Module {
         Property("autoplayOnStartEnabled")
             .get { GeneralStorage.shared.isAutoplayOnStartEnabled }
             .set { GeneralStorage.shared.isAutoplayOnStartEnabled = $0 }
+
+        Property("isSpectrumVisualizerEnabled")
+            .get { GeneralStorage.shared.isSpectrumVisualizerEnabled }
+            .set {
+                GeneralStorage.shared.isSpectrumVisualizerEnabled = $0
+                self.sendEvent("onSpectrumVisualizerEnabledChanged", ["enabled": $0])
+            }
 
     // MARK: - Getters
 
@@ -174,8 +188,16 @@ public class ExpoOrpheusModule: Module {
         OrpheusPlayerManager.shared.removeTrack(at: index)
     }
 
+    AsyncFunction("moveTrack") { (fromIndex: Int, toIndex: Int) in
+        OrpheusPlayerManager.shared.moveTrack(fromIndex: fromIndex, toIndex: toIndex)
+    }
+
     AsyncFunction("clear") {
          OrpheusPlayerManager.shared.clearQueue()
+    }
+
+    AsyncFunction("reverseRemainingQueue") {
+        OrpheusPlayerManager.shared.reverseRemainingQueue()
     }
 
     AsyncFunction("setPlaybackSpeed") { (speed: Double) in
@@ -248,6 +270,10 @@ public class ExpoOrpheusModule: Module {
         return OrpheusDownloadManager.shared.getDownloads()
     }
 
+    Function("getCompletedDownloadTasks") { () -> [DownloadTask] in
+        return OrpheusDownloadManager.shared.getCompletedTasks()
+    }
+
     Function("getDownloadStatusByIds") { (ids: [String]) -> [String: Int] in
         return OrpheusDownloadManager.shared.getDownloadStatusByIds(ids: ids)
     }
@@ -305,5 +331,6 @@ public class ExpoOrpheusModule: Module {
             AudioSpectrumAnalyzer.shared.fillSpectrumData(destination: ptr, count: count)
         }
     }
+
   }
 }

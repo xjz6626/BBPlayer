@@ -74,14 +74,14 @@ export default function DynamicFeedPage() {
 		)
 	}, [dynamicData])
 
-	const refresh = useCallback(async () => {
+	const refresh = async () => {
 		setRefreshing(true)
 		try {
 			await Promise.all([refetch(), refetchFollowings()])
 		} finally {
 			setRefreshing(false)
 		}
-	}, [refetch, refetchFollowings])
+	}
 
 	return (
 		<View style={[styles.container, { backgroundColor: colors.background }]}>

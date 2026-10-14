@@ -15,6 +15,7 @@ class GeneralStorage {
     private let KEY_RESTORE_ENABLED = "restorePlaybackPositionEnabled"
     private let KEY_LOUDNESS_ENABLED = "loudnessNormalizationEnabled"
     private let KEY_AUTOPLAY_ENABLED = "autoplayOnStartEnabled"
+    private let KEY_SPECTRUM_VISUALIZER_ENABLED = "spectrumVisualizerEnabled"
     
     // MARK: - Preferences
     
@@ -31,6 +32,11 @@ class GeneralStorage {
     var isAutoplayOnStartEnabled: Bool {
         get { return mmkv?.bool(forKey: KEY_AUTOPLAY_ENABLED, defaultValue: false) ?? false }
         set { mmkv?.set(newValue, forKey: KEY_AUTOPLAY_ENABLED) }
+    }
+
+    var isSpectrumVisualizerEnabled: Bool {
+        get { return mmkv?.bool(forKey: KEY_SPECTRUM_VISUALIZER_ENABLED, defaultValue: false) ?? false }
+        set { mmkv?.set(newValue, forKey: KEY_SPECTRUM_VISUALIZER_ENABLED) }
     }
     
     // MARK: - Playback State
@@ -50,10 +56,10 @@ class GeneralStorage {
               let dicts = try? JSONSerialization.jsonObject(with: data, options: []) as? [[String: Any]] else {
             return []
         }
-        
+
         return dicts.compactMap { Track(dictionary: $0) }
     }
-    
+
     func savePosition(index: Int, positionSec: Double) {
         mmkv?.set(Int32(index), forKey: KEY_SAVED_INDEX)
         
@@ -87,4 +93,3 @@ class GeneralStorage {
         return mmkv?.bool(forKey: KEY_SAVED_SHUFFLE_MODE, defaultValue: false) ?? false
     }
 }
-

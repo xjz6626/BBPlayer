@@ -1,4 +1,4 @@
-import { DownloadState, Orpheus, type DownloadTask } from '@bbplayer/orpheus'
+import { Orpheus, type DownloadTask } from '@bbplayer/orpheus'
 import { Icon } from '@expo/ui'
 import { LegendList } from '@legendapp/list/react-native'
 import type { TrueSheet as TrueSheetType } from '@lodev09/react-native-true-sheet'
@@ -19,16 +19,20 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import ActivityIndicator from '@/components/common/ActivityIndicator'
 import CoverWithPlaceHolder from '@/components/common/CoverWithPlaceHolder'
-import FunctionalMenu from '@/components/common/FunctionalMenu'
+import { MenuView } from '@/components/common/FunctionalMenu'
 import IconButton from '@/components/common/IconButton'
 import UniversalCheckbox from '@/components/common/UniversalCheckbox'
 import { alert } from '@/components/modals/AlertModal'
 import ExportDownloadsProgressModal from '@/components/modals/settings/ExportDownloadsProgressModal'
-import NowPlayingBar from '@/components/NowPlayingBar'
 import { useTrackSelection } from '@/features/playlist/local/hooks/useTrackSelection'
 import { useRemoveDownloadsMutation } from '@/hooks/mutations/orpheus'
-import { useAllDownloads, orpheusQueryKeys } from '@/hooks/queries/orpheus'
+import {
+	useCompletedDownloads,
+	orpheusQueryKeys,
+} from '@/hooks/queries/orpheus'
+import { useMenuActions } from '@/hooks/ui/useMenuActions'
 import { queryClient } from '@/lib/config/queryClient'
+import { enqueueTracks } from '@/lib/player/playbackSession'
 import {
 	LIST_ITEM_COVER_SIZE,
 	LIST_ITEM_BORDER_RADIUS,
@@ -117,6 +121,25 @@ function DownloadedItem({
 	const theme = useTheme()
 	const track = item.track
 
+	const menuActions = useMenuActions([
+		{
+			title: '导出',
+			image: EXPORT_ICON,
+			onPress: () => onSingleExport(item.id),
+		},
+		{
+			title: '删除',
+			image: DELETE_ICON,
+			onPress: () => onDelete(item.id),
+		},
+		{
+			title: '下一首播放',
+			image: PLAY_NEXT_ICON,
+			onPress: () => onPlayNext(item),
+			attributes: { disabled: !item.track },
+		},
+	])
+
 	return (
 		<Touchable
 			androidRipple={{}}
@@ -149,16 +172,13 @@ function DownloadedItem({
 			>
 				<View style={styles.itemContainer}>
 					<View style={styles.indexContainer}>
-						<View
-							style={[
-								styles.checkboxContainer,
-								{ opacity: selectMode ? 1 : 0 },
-							]}
-						>
-							<UniversalCheckbox
-								status={isSelected ? 'checked' : 'unchecked'}
-							/>
-						</View>
+						{selectMode && (
+							<View style={styles.checkboxContainer}>
+								<UniversalCheckbox
+									status={isSelected ? 'checked' : 'unchecked'}
+								/>
+							</View>
+						)}
 						<View style={{ opacity: selectMode ? 0 : 1 }}>
 							<Text
 								variant='bodyMedium'
@@ -207,32 +227,13 @@ function DownloadedItem({
 					</View>
 
 					{!selectMode && (
-						<FunctionalMenu
-							anchor={
-								<IconButton
-									icon='dots-vertical'
-									size={20}
-									iconColor={theme.colors.onSurfaceVariant}
-								/>
-							}
-						>
-							<FunctionalMenu.Item
-								leadingIcon={EXPORT_ICON}
-								title='导出'
-								onPress={() => onSingleExport(item.id)}
+						<MenuView {...menuActions}>
+							<IconButton
+								icon='dots-vertical'
+								size={20}
+								iconColor={theme.colors.onSurfaceVariant}
 							/>
-							<FunctionalMenu.Item
-								leadingIcon={DELETE_ICON}
-								title='删除'
-								onPress={() => onDelete(item.id)}
-							/>
-							<FunctionalMenu.Item
-								leadingIcon={PLAY_NEXT_ICON}
-								title='下一首播放'
-								onPress={() => onPlayNext(item)}
-								disabled={!item.track}
-							/>
-						</FunctionalMenu>
+						</MenuView>
 					)}
 				</View>
 			</Surface>
@@ -251,9 +252,10 @@ export default function DownloadedPage() {
 		destinationUri: string
 	} | null>(null)
 
-	const { data: allTasks, isPending } = useAllDownloads()
-	const completedTasks = (allTasks ?? []).filter(
-		(t) => t.state === DownloadState.COMPLETED,
+	const { data: completedDownloads, isPending } = useCompletedDownloads()
+	const completedTasks = useMemo(
+		() => completedDownloads ?? [],
+		[completedDownloads],
 	)
 
 	const [searchQuery, setSearchQuery] = useState('')
@@ -288,7 +290,12 @@ export default function DownloadedPage() {
 			return
 		}
 
-		void Orpheus.addToEnd([item.track], item.track.id, false)
+		void enqueueTracks({
+			tracks: [item.track],
+			startFromKey: item.track.id,
+		}).catch((error: unknown) =>
+			toastAndLogError('播放失败', error, 'Downloaded.Page'),
+		)
 	}, [])
 
 	const resolveExportDestination = useCallback(async () => {
@@ -353,7 +360,7 @@ export default function DownloadedPage() {
 							try {
 								await Orpheus.removeDownload(id)
 								await queryClient.invalidateQueries({
-									queryKey: [...orpheusQueryKeys.all, 'allDownloads'],
+									queryKey: orpheusQueryKeys.completedDownloads(),
 								})
 							} catch (e) {
 								toastAndLogError('删除下载失败', e, 'Downloaded.Page')
@@ -370,7 +377,7 @@ export default function DownloadedPage() {
 	const handlePlayNext = useCallback(async (task: DownloadTask) => {
 		if (!task.track) return
 		try {
-			await Orpheus.playNext(task.track)
+			await enqueueTracks({ tracks: [task.track], playNext: true })
 			toast.success('添加到下一首播放成功')
 		} catch (error) {
 			toastAndLogError('添加到下一首播放失败', error, 'Download')
@@ -520,7 +527,7 @@ export default function DownloadedPage() {
 						/>
 						<Appbar.Action
 							icon='progress-download'
-							onPress={() => router.push('/download')}
+							onPress={() => router.navigate('/download')}
 						/>
 						<Appbar.Action
 							icon='export-variant'
@@ -560,10 +567,6 @@ export default function DownloadedPage() {
 				/>
 			</View>
 
-			<View style={styles.nowPlayingBarContainer}>
-				<NowPlayingBar />
-			</View>
-
 			<ExportDownloadsProgressModal
 				sheetRef={exportSheetRef}
 				ids={exportConfig?.ids ?? []}
@@ -576,12 +579,6 @@ export default function DownloadedPage() {
 const styles = StyleSheet.create({
 	container: { flex: 1 },
 	listContainer: { flex: 1 },
-	nowPlayingBarContainer: {
-		position: 'absolute',
-		bottom: 0,
-		left: 0,
-		right: 0,
-	},
 	searchbar: {
 		margin: 8,
 		elevation: 0,

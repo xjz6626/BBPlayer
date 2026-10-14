@@ -13,9 +13,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import Button from '@/components/common/Button'
+import SettingsSectionTitle from '@/components/common/SettingsSectionTitle'
 import UniversalSwitch from '@/components/common/UniversalSwitch'
 import { alert } from '@/components/modals/AlertModal'
-import NowPlayingBar from '@/components/NowPlayingBar'
 import useCurrentTrack from '@/hooks/player/useCurrentTrack'
 import { usePersonalInformation } from '@/hooks/queries/bilibili/user'
 import useAppStore from '@/hooks/stores/useAppStore'
@@ -78,6 +78,10 @@ export default function BilibiliAccountSettingsPage() {
 			>
 				{hasBilibiliCookie ? (
 					<>
+						<SettingsSectionTitle
+							title='资料'
+							first
+						/>
 						<Surface
 							mode='flat'
 							style={[
@@ -123,6 +127,7 @@ export default function BilibiliAccountSettingsPage() {
 								</Text>
 							</View>
 						</Surface>
+						<SettingsSectionTitle title='隐私' />
 						<View style={styles.section}>
 							<View style={styles.settingRow}>
 								<View style={styles.settingText}>
@@ -141,7 +146,9 @@ export default function BilibiliAccountSettingsPage() {
 									}
 								/>
 							</View>
-							<Divider />
+						</View>
+						<SettingsSectionTitle title='登录方式' />
+						<View style={styles.section}>
 							<List.Item
 								title='重新扫码登录'
 								description='适合在当前 Cookie 失效后重新授权'
@@ -158,7 +165,7 @@ export default function BilibiliAccountSettingsPage() {
 									/>
 								)}
 								onPress={() =>
-									router.push('/settings/bilibili-account/qrcode-login')
+									router.navigate('/settings/bilibili-account/qrcode-login')
 								}
 							/>
 							<Divider />
@@ -178,7 +185,7 @@ export default function BilibiliAccountSettingsPage() {
 									/>
 								)}
 								onPress={() =>
-									router.push('/settings/bilibili-account/phone-login')
+									router.navigate('/settings/bilibili-account/phone-login')
 								}
 							/>
 							<Divider />
@@ -234,12 +241,13 @@ export default function BilibiliAccountSettingsPage() {
 								</Text>
 							</View>
 						</View>
+						<SettingsSectionTitle title='登录方式' />
 						<View style={styles.loginActions}>
 							<Button
 								mode='contained'
 								icon='qrcode-scan'
 								onPress={() =>
-									router.push('/settings/bilibili-account/qrcode-login')
+									router.navigate('/settings/bilibili-account/qrcode-login')
 								}
 							>
 								扫码登录
@@ -248,7 +256,7 @@ export default function BilibiliAccountSettingsPage() {
 								mode='outlined'
 								icon='cellphone-key'
 								onPress={() =>
-									router.push('/settings/bilibili-account/phone-login')
+									router.navigate('/settings/bilibili-account/phone-login')
 								}
 							>
 								手机号登录
@@ -264,9 +272,6 @@ export default function BilibiliAccountSettingsPage() {
 					</>
 				)}
 			</ScrollView>
-			<View style={styles.nowPlayingBarContainer}>
-				<NowPlayingBar />
-			</View>
 		</View>
 	)
 }
@@ -338,11 +343,5 @@ const styles = StyleSheet.create({
 	},
 	loginActions: {
 		gap: 12,
-	},
-	nowPlayingBarContainer: {
-		position: 'absolute',
-		bottom: 0,
-		left: 0,
-		right: 0,
 	},
 })

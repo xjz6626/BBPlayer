@@ -3,10 +3,14 @@ import { Directory, File, Paths } from 'expo-file-system'
 import * as SQLite from 'expo-sqlite'
 import JSZip from 'jszip'
 
+import { restorePlaybackContextState } from '@/hooks/stores/playbackContextStore'
 import { expoDb } from '@/lib/db/db'
+import { clearLegacyMigrationKeys } from '@/lib/db/migrations'
 import log from '@/utils/log'
 import { storage } from '@/utils/mmkv'
+import { getStartupScreen, setStartupScreen } from '@/utils/startup-screen'
 
+import { BACKUP_VERSION } from './types'
 import type { BackupManifest } from './types'
 
 const logger = log.extend('backup.import')
@@ -29,8 +33,10 @@ export async function restoreBackup(filePath: string): Promise<void> {
 	const manifestJson = await manifestEntry.async('string')
 	const manifest: BackupManifest = JSON.parse(manifestJson)
 
-	if (manifest.version !== 1) {
-		throw new Error(`不支持的备份版本：${manifest.version}`)
+	if (manifest.version !== BACKUP_VERSION) {
+		throw new Error(
+			`不支持的备份版本：${String(manifest.version)}。旧版本备份无法安全导入，请使用当前版本重新导出备份。`,
+		)
 	}
 
 	const dbEntry = zip.file('database.db')
@@ -69,8 +75,22 @@ export async function restoreBackup(filePath: string): Promise<void> {
 		throw e
 	}
 
+	// The restored database now owns migration state. Never let this device's
+	// legacy MMKV flags seed state for a different database.
+	clearLegacyMigrationKeys()
+
 	if (manifest.mmkv['app-storage']) {
 		storage.set('app-storage', manifest.mmkv['app-storage'])
+	}
+	if (
+		manifest.mmkv.startup_screen === 'home' ||
+		manifest.mmkv.startup_screen === 'library'
+	) {
+		setStartupScreen(manifest.mmkv.startup_screen)
+	} else if (manifest.mmkv['app-storage']) {
+		// 旧备份的偏好仍在 app-storage 中，不能沿用本机已有的独立 key。
+		storage.remove('startup_screen')
+		getStartupScreen()
 	}
 	if (manifest.mmkv['shared-playlist-members']) {
 		storage.set(
@@ -78,6 +98,7 @@ export async function restoreBackup(filePath: string): Promise<void> {
 			manifest.mmkv['shared-playlist-members'],
 		)
 	}
+	restorePlaybackContextState(manifest.mmkv['playback-context-store'])
 	logger.info('MMKV 数据已恢复')
 
 	Orpheus.importData(manifest.orpheus)

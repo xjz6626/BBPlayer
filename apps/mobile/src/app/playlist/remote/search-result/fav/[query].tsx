@@ -3,8 +3,6 @@ import { useMemo, useState } from 'react'
 import { StyleSheet, View } from 'react-native'
 import { Appbar, Text, useTheme } from 'react-native-paper'
 
-import ActivityIndicator from '@/components/common/ActivityIndicator'
-import NowPlayingBar from '@/components/NowPlayingBar'
 import ThemedRefreshControl, {
 	ThemedRefreshIndicator,
 } from '@/components/theme/ThemedRefreshControl'
@@ -18,6 +16,7 @@ import {
 	useInfiniteSearchFavoriteItems,
 } from '@/hooks/queries/bilibili/favorite'
 import { usePersonalInformation } from '@/hooks/queries/bilibili/user'
+import { useScreenTransitionReady } from '@/hooks/router/useScreenTransitionReady'
 import { useModalStore } from '@/hooks/stores/useModalStore'
 import { useDoubleTapScrollToTop } from '@/hooks/ui/useDoubleTapScrollToTop'
 import { bv2av } from '@/lib/api/bilibili/utils'
@@ -49,18 +48,18 @@ const mapApiItemToTrack = (
 			bvid: apiItem.bvid,
 			cid: null,
 			isMultiPage: false,
-			videoIsValid: true,
+			videoIsValid: apiItem.attr === 0,
 		},
 	}
 }
 
 export default function SearchResultsPage() {
+	const isListReady = useScreenTransitionReady()
 	const { colors } = useTheme()
 	const { query } = useLocalSearchParams<{ query: string }>()
 	const router = useRouter()
 
-	const { selected, selectMode, toggle, enterSelectMode, setSelected } =
-		useTrackSelection()
+	const { selected, selectMode, toggle, enterSelectMode } = useTrackSelection()
 	const selection = useMemo(
 		() => ({
 			active: selectMode,
@@ -82,6 +81,7 @@ export default function SearchResultsPage() {
 		isPending: isPendingSearchData,
 		isError: isErrorSearchData,
 		hasNextPage,
+		isFetchingNextPage,
 		fetchNextPage,
 		refetch,
 	} = useInfiniteSearchFavoriteItems(
@@ -99,8 +99,8 @@ export default function SearchResultsPage() {
 
 	const { trackMenuItems, playTrack } = useSearchInteractions()
 
-	if (isPendingSearchData) {
-		return <PlaylistTrackListSkeleton />
+	if (isPendingSearchData || !isListReady) {
+		return <PlaylistTrackListSkeleton animate={isListReady} />
 	}
 
 	if (isErrorSearchData) {
@@ -120,20 +120,6 @@ export default function SearchResultsPage() {
 				/>
 				{selectMode ? (
 					<>
-						<Appbar.Action
-							icon='select-all'
-							onPress={() => setSelected(new Set(tracks.map((t) => t.id)))}
-						/>
-						<Appbar.Action
-							icon='select-compare'
-							onPress={() =>
-								setSelected(
-									new Set(
-										tracks.filter((t) => !selected.has(t.id)).map((t) => t.id),
-									),
-								)
-							}
-						/>
 						<Appbar.Action
 							icon='playlist-plus'
 							onPress={() => {
@@ -167,22 +153,9 @@ export default function SearchResultsPage() {
 					selection={selection}
 					onEndReached={hasNextPage ? () => fetchNextPage() : undefined}
 					hasNextPage={hasNextPage}
+					isFetchingNextPage={isFetchingNextPage}
 					ListHeaderComponent={
 						<ThemedRefreshIndicator refreshing={refreshing} />
-					}
-					ListFooterComponent={
-						hasNextPage ? (
-							<View style={styles.footerLoadingContainer}>
-								<ActivityIndicator size='small' />
-							</View>
-						) : (
-							<Text
-								variant='titleMedium'
-								style={styles.footerText}
-							>
-								•
-							</Text>
-						)
 					}
 					refreshControl={
 						<ThemedRefreshControl
@@ -205,9 +178,6 @@ export default function SearchResultsPage() {
 					}
 				/>
 			</View>
-			<View style={styles.nowPlayingBarContainer}>
-				<NowPlayingBar />
-			</View>
 		</View>
 	)
 }
@@ -219,24 +189,8 @@ const styles = StyleSheet.create({
 	listContainer: {
 		flex: 1,
 	},
-	footerLoadingContainer: {
-		flexDirection: 'row',
-		alignItems: 'center',
-		justifyContent: 'center',
-		padding: 16,
-	},
-	footerText: {
-		textAlign: 'center',
-		paddingTop: 10,
-	},
 	emptyListText: {
 		paddingVertical: 32,
 		textAlign: 'center',
-	},
-	nowPlayingBarContainer: {
-		position: 'absolute',
-		bottom: 0,
-		left: 0,
-		right: 0,
 	},
 })

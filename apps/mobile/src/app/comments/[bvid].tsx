@@ -56,7 +56,7 @@ export default function CommentsPage() {
 
 	const onReplyPress = useCallback(
 		(item: BilibiliCommentItem) => {
-			router.push({
+			router.navigate({
 				pathname: '/comments/reply',
 				params: { bvid: bvid, rpid: item.rpid },
 			})
