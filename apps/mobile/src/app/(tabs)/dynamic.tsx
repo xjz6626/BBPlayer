@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import ActivityIndicator from '@/components/common/ActivityIndicator'
 import IconButton from '@/components/common/IconButton'
 import SkinAppbarBackground from '@/components/navigation/SkinAppbarBackground'
+import NowPlayingBar from '@/components/NowPlayingBar'
 import ThemedRefreshControl, {
 	ThemedRefreshIndicator,
 } from '@/components/theme/ThemedRefreshControl'
@@ -23,10 +24,8 @@ import {
 import { usePersonalInformation } from '@/hooks/queries/bilibili/user'
 import useAppStore from '@/hooks/stores/useAppStore'
 import useActiveSkin from '@/hooks/theme/useActiveSkin'
-import { useNowPlayingBar } from '@/hooks/ui/useNowPlayingBar'
 
 export default function DynamicFeedPage() {
-	useNowPlayingBar()
 	const router = useRouter()
 	const insets = useSafeAreaInsets()
 	const { colors } = useTheme()
@@ -195,6 +194,9 @@ export default function DynamicFeedPage() {
 					</>
 				)}
 			</View>
+			<View style={styles.nowPlayingBarContainer}>
+				<NowPlayingBar />
+			</View>
 		</View>
 	)
 }
@@ -240,5 +242,11 @@ const styles = StyleSheet.create({
 	empty: {
 		alignItems: 'center',
 		padding: 48,
+	},
+	nowPlayingBarContainer: {
+		position: 'absolute',
+		bottom: 0,
+		left: 0,
+		right: 0,
 	},
 })

@@ -5,6 +5,7 @@ import { Linking, SectionList, StyleSheet, View } from 'react-native'
 import { Appbar, Button, List, Text, useTheme } from 'react-native-paper'
 
 import ActivityIndicator from '@/components/common/ActivityIndicator'
+import NowPlayingBar from '@/components/NowPlayingBar'
 import ThemedRefreshControl, {
 	ThemedRefreshIndicator,
 } from '@/components/theme/ThemedRefreshControl'
@@ -13,7 +14,6 @@ import {
 	useWeeklyVocalRank,
 	weeklyVocalRankQueryKey,
 } from '@/hooks/queries/bilibili/weekly'
-import { useNowPlayingBar } from '@/hooks/ui/useNowPlayingBar'
 import { queryClient } from '@/lib/config/queryClient'
 import { syncFacade } from '@/lib/facades/syncBilibiliPlaylist'
 import {
@@ -26,7 +26,6 @@ import { addToQueue } from '@/utils/player'
 import toast from '@/utils/toast'
 
 export default function WeeklyRankPage() {
-	useNowPlayingBar()
 	const router = useRouter()
 	const { colors } = useTheme()
 	const [refreshing, setRefreshing] = useState(false)
@@ -201,6 +200,7 @@ export default function WeeklyRankPage() {
 					contentContainerStyle={styles.listContent}
 				/>
 			)}
+			<NowPlayingBar />
 		</View>
 	)
 }

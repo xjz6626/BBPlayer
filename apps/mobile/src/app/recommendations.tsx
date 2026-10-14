@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import { StyleSheet, View } from 'react-native'
 import { Appbar, Text, useTheme } from 'react-native-paper'
 
+import NowPlayingBar from '@/components/NowPlayingBar'
 import ThemedRefreshControl, {
 	ThemedRefreshIndicator,
 } from '@/components/theme/ThemedRefreshControl'
@@ -13,11 +14,9 @@ import { useRemotePlaylist } from '@/features/playlist/remote/hooks/useRemotePla
 import { useTrackSelection } from '@/features/playlist/remote/hooks/useTrackSelection'
 import { PlaylistPageSkeleton } from '@/features/playlist/skeletons/PlaylistSkeleton'
 import { useBilibiliMusicRecommendations } from '@/hooks/queries/bilibili/recommendation'
-import { useNowPlayingBar } from '@/hooks/ui/useNowPlayingBar'
 import { mapBilibiliVideoDetailsToTrack } from '@/utils/bilibili-track'
 
 export default function RecommendationsPage() {
-	useNowPlayingBar()
 	const router = useRouter()
 	const { colors } = useTheme()
 	const [refreshing, setRefreshing] = useState(false)
@@ -94,6 +93,7 @@ export default function RecommendationsPage() {
 					/>
 				}
 			/>
+			<NowPlayingBar />
 		</View>
 	)
 }
