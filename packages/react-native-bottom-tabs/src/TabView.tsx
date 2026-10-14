@@ -1,7 +1,8 @@
-import React, { useLayoutEffect, useRef } from 'react'
+import React from 'react'
 import {
 	type ColorValue,
 	type DimensionValue,
+	type LayoutChangeEvent,
 	Image,
 	Platform,
 	type StyleProp,
@@ -294,7 +295,6 @@ const TabView = <Route extends BaseRoute>({
 }: Props<Route>) => {
 	// @ts-ignore
 	const focusedKey = navigationState.routes[navigationState.index].key
-	const customTabBarWrapperRef = useRef<View>(null)
 	const [tabBarHeight, setTabBarHeight] = React.useState<number | undefined>(0)
 	const [measuredDimensions, setMeasuredDimensions] = React.useState<
 		{ width: DimensionValue; height: DimensionValue } | undefined
@@ -443,9 +443,17 @@ const TabView = <Route extends BaseRoute>({
 
 	const handleTabBarMeasured = React.useCallback(
 		({ nativeEvent: { height } }: { nativeEvent: OnTabBarMeasured }) => {
-			setTabBarHeight(height)
+			// The hidden native bar must not overwrite the custom bar's height.
+			if (!renderCustomTabBar) setTabBarHeight(height)
 		},
-		[setTabBarHeight],
+		[renderCustomTabBar],
+	)
+
+	const handleCustomTabBarLayout = React.useCallback(
+		({ nativeEvent: { layout } }: LayoutChangeEvent) => {
+			setTabBarHeight(layout.height)
+		},
+		[],
 	)
 
 	const handleNativeLayout = React.useCallback(
@@ -454,15 +462,6 @@ const TabView = <Route extends BaseRoute>({
 		},
 		[setMeasuredDimensions],
 	)
-
-	useLayoutEffect(() => {
-		// If we are rendering a custom tab bar, we need to measure it to set the tab bar height.
-		if (renderCustomTabBar && customTabBarWrapperRef.current) {
-			customTabBarWrapperRef.current.measure((_x, _y, _width, height) => {
-				setTabBarHeight(height)
-			})
-		}
-	}, [renderCustomTabBar])
 
 	return (
 		<BottomTabBarHeightContext.Provider value={tabBarHeight}>
@@ -542,7 +541,7 @@ const TabView = <Route extends BaseRoute>({
 				) : null}
 			</NativeTabView>
 			{renderCustomTabBar ? (
-				<View ref={customTabBarWrapperRef}>{renderCustomTabBar()}</View>
+				<View onLayout={handleCustomTabBarLayout}>{renderCustomTabBar()}</View>
 			) : null}
 		</BottomTabBarHeightContext.Provider>
 	)
