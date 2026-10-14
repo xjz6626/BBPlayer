@@ -170,6 +170,7 @@ jobs:
         env:
           VERSION_CODE: ${{ env.VERSION_CODE }}
           APP_VARIANT: production
+          BBPLAYER_DISABLE_OTA: '1'
           ABI_FILTERS: arm64-v8a
           SENTRY_DISABLE_AUTO_UPLOAD: 'true'
 

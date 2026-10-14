@@ -20,6 +20,7 @@ import { version } from './package.json'
 
 const IS_DEV = process.env.APP_VARIANT === 'development'
 const IS_PREVIEW = process.env.APP_VARIANT === 'preview'
+const ENABLE_OTA_UPDATES = process.env.BBPLAYER_DISABLE_OTA !== '1'
 const UPDATE_SERVER_URL = 'https://updates.bbplayer.roitium.com'
 const UPDATE_CHANNEL = IS_DEV
 	? 'development'
@@ -332,7 +333,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
 			),
 		},
 		updates: {
-			enabled: true,
+			// Fork Nightly builds must use their embedded bundle, including over cached upstream OTA.
+			enabled: ENABLE_OTA_UPDATES,
 			url: `${UPDATE_SERVER_URL}/api/manifest`,
 			requestHeaders: {
 				'expo-channel-name': UPDATE_CHANNEL,
