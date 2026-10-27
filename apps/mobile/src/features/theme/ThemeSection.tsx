@@ -493,11 +493,13 @@ function ThemeSectionContent() {
 			) : null}
 
 			<Portal>
-				<BootSplashAssetPreview
-					asset={previewAsset}
-					onDismiss={() => setPreviewAsset(null)}
-					onSelect={selectBootSplashAsset}
-				/>
+				{previewAsset ? (
+					<BootSplashAssetPreview
+						asset={previewAsset}
+						onDismiss={() => setPreviewAsset(null)}
+						onSelect={selectBootSplashAsset}
+					/>
+				) : null}
 			</Portal>
 		</>
 	)
@@ -897,7 +899,7 @@ function BootSplashAssetPreview({
 	onDismiss,
 	onSelect,
 }: {
-	asset: SkinBootSplashAsset | null
+	asset: SkinBootSplashAsset
 	onDismiss: () => void
 	onSelect: (asset: SkinBootSplashAsset, mode: 'poster' | 'video') => void
 }) {
@@ -907,15 +909,15 @@ function BootSplashAssetPreview({
 		mode: 'poster' | 'video'
 	} | null>(null)
 	const mode =
-		asset && selectedMode?.assetId === asset.id
+		selectedMode?.assetId === asset.id
 			? selectedMode.mode
-			: asset?.video
+			: asset.video
 				? 'video'
 				: 'poster'
 
 	return (
 		<AnimatedModalOverlay
-			visible={asset !== null}
+			visible
 			onDismiss={onDismiss}
 		>
 			{asset ? (

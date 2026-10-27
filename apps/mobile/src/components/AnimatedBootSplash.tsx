@@ -1,6 +1,6 @@
 import { BootSplashVideoView } from '@bbplayer/native'
 import { Image } from 'expo-image'
-import { memo, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useState } from 'react'
 import { StyleSheet, useColorScheme, useWindowDimensions } from 'react-native'
 import { useHideAnimation, type Manifest } from 'react-native-bootsplash'
 import Animated, {
@@ -29,9 +29,14 @@ interface AnimatedBootSplashProps {
 	ready: boolean
 }
 
-const AnimatedBootSplash = memo(function AnimatedBootSplash({
+interface AnimatedBootSplashContentProps extends AnimatedBootSplashProps {
+	onHidden: () => void
+}
+
+function AnimatedBootSplashContent({
 	ready,
-}: AnimatedBootSplashProps) {
+	onHidden,
+}: AnimatedBootSplashContentProps) {
 	const { height, width } = useWindowDimensions()
 	const isDarkMode = useColorScheme() === 'dark'
 	const insets = useSafeAreaInsets()
@@ -66,7 +71,6 @@ const AnimatedBootSplash = memo(function AnimatedBootSplash({
 				? (bootSplashAsset?.video ?? null)
 				: null
 	const bootSplashAssetCard = preloadedCard || bootSplashAsset?.card || null
-	const [visible, setVisible] = useState(true)
 	const [introFinished, setIntroFinished] = useState(false)
 	const [videoEnded, setVideoEnded] = useState(false)
 	const [videoPlaybackRequested, setVideoPlaybackRequested] = useState(false)
@@ -127,13 +131,14 @@ const AnimatedBootSplash = memo(function AnimatedBootSplash({
 
 		containerOpacity.set(
 			withTiming(0, { duration: 280 }, (finished) => {
-				if (finished) scheduleOnRN(setVisible, false)
+				if (finished) scheduleOnRN(onHidden)
 			}),
 		)
 	}, [
 		bootSplashVideo,
 		containerOpacity,
 		introFinished,
+		onHidden,
 		playFullAnimation,
 		ready,
 		videoEnded,
@@ -153,8 +158,6 @@ const AnimatedBootSplash = memo(function AnimatedBootSplash({
 	const containerStyle = useAnimatedStyle(() => ({
 		opacity: containerOpacity.value,
 	}))
-
-	if (!visible) return null
 
 	return (
 		<Animated.View
@@ -200,6 +203,20 @@ const AnimatedBootSplash = memo(function AnimatedBootSplash({
 			/>
 		</Animated.View>
 	)
+}
+
+const AnimatedBootSplash = memo(function AnimatedBootSplash({
+	ready,
+}: AnimatedBootSplashProps) {
+	const [visible, setVisible] = useState(true)
+	const handleHidden = useCallback(() => setVisible(false), [])
+
+	return visible ? (
+		<AnimatedBootSplashContent
+			ready={ready}
+			onHidden={handleHidden}
+		/>
+	) : null
 })
 
 const styles = StyleSheet.create({
